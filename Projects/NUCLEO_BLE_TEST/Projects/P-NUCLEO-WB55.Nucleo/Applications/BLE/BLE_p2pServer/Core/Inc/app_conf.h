@@ -46,7 +46,6 @@
  * Define BD_ADDR type: define proper address. Can only be GAP_PUBLIC_ADDR (0x00) or GAP_STATIC_RANDOM_ADDR (0x01)
  */
 #define CFG_IDENTITY_ADDRESS              GAP_PUBLIC_ADDR
-
 /**
  * Define privacy: PRIVACY_DISABLED or PRIVACY_ENABLED
  */
@@ -365,12 +364,11 @@
 #define CFG_BLE_MAX_TX_POWER            (6)
 
 /**
-* BLE stack Maximum number of created Enhanced ATT bearers to be configured
-* in addition to the number of links
-*     - Range: 0 .. 4
-*/ 
-#define CFG_BLE_MAX_ADD_EATT_BEARERS    (4)
-        
+ * BLE stack Maximum number of created Enhanced ATT bearers to be configured
+ * in addition to the number of links
+ *     - Range: 0 .. 4
+ */
+#define CFG_BLE_MAX_ADD_EATT_BEARERS            (4)
 
 /**
  * BLE Rx model configuration flags to be configured with:
@@ -695,6 +693,7 @@ typedef enum
   CFG_TASK_SW1_BUTTON_PUSHED_ID,
   CFG_TASK_SW2_BUTTON_PUSHED_ID,
   CFG_TASK_SW3_BUTTON_PUSHED_ID,
+  CFG_TASK_NAME_UPDATE_ID,
   /* USER CODE END CFG_Task_Id_With_HCI_Cmd_t */
   CFG_LAST_TASK_ID_WITH_HCICMD,                                               /**< Shall be LAST in the list */
 } CFG_Task_Id_With_HCI_Cmd_t;

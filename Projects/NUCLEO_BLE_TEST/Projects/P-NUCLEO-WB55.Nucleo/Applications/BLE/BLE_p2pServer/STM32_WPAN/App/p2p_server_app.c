@@ -1,4 +1,4 @@
-/* USER CODE BEGIN Headerasdadsasdads */
+/* USER CODE BEGIN Header */
 /**
   ******************************************************************************
   * @file    p2p_server_app.c

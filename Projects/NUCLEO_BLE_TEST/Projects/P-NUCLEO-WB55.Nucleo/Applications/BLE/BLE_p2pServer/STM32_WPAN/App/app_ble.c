@@ -352,7 +352,16 @@ uint8_t a_ManufData[14] = {sizeof(a_ManufData)-1,
 #endif /* P2P_SERVER6 != 0 */
 
 /* USER CODE BEGIN PV */
+// Name change functionality
+static uint16_t current_name_counter = 0;
+static uint8_t Name_Change_timer_Id;
+static const char base_name[] = "Dairy Tag ";
+static char current_device_name[32]; // Buffer for full name
+static uint8_t name_change_pending = 0;
 
+// Scan response data for long name
+static uint8_t scan_response_data[31];
+static uint8_t scan_response_length = 0;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -371,7 +380,9 @@ static void Connection_Interval_Update_Req(void);
 #endif /* L2CAP_REQUEST_NEW_CONN_PARAM != 0 */
 
 /* USER CODE BEGIN PFP */
-
+static void Update_Device_Name_With_Counter(void);
+static void Name_Change_Timeout(void);
+static void Process_Name_Change(void);
 /* USER CODE END PFP */
 
 /* External variables --------------------------------------------------------*/
@@ -538,7 +549,18 @@ void APP_BLE_Init(void)
   Adv_Request(APP_BLE_FAST_ADV);
 
   /* USER CODE BEGIN APP_BLE_Init_2 */
+  // Initialize name change system
+  current_name_counter = 0;
+  Update_Device_Name_With_Counter();
 
+  // Create timer for name changes (1 minute intervals)
+  HW_TS_Create(CFG_TIM_PROC_ID_ISR, &Name_Change_timer_Id, hw_ts_SingleShot, Name_Change_Timeout);
+
+  // Register task for name change processing
+  UTIL_SEQ_RegTask(1<<CFG_TASK_NAME_UPDATE_ID, UTIL_SEQ_RFU, Process_Name_Change);
+
+  // Start the name change timer (1 minute)
+  HW_TS_Start(Name_Change_timer_Id, (60*1000*1000/CFG_TS_TICK_VAL));
   /* USER CODE END APP_BLE_Init_2 */
 
   return;
@@ -598,7 +620,10 @@ SVCCTL_UserEvtFlowStatus_t SVCCTL_App_Notification(void *p_Pckt)
       HandleNotification.ConnectionHandle = BleApplicationContext.BleApplicationContext_legacy.connectionHandle;
       P2PS_APP_Notification(&HandleNotification);
       /* USER CODE BEGIN EVT_DISCONN_COMPLETE */
-
+      // Client disconnected - restart name change timer
+      APP_DBG_MSG("Client disconnected - restarting name change timer\n");
+      HW_TS_Stop(Name_Change_timer_Id);
+      HW_TS_Start(Name_Change_timer_Id, (60*1000*1000/CFG_TS_TICK_VAL));
       /* USER CODE END EVT_DISCONN_COMPLETE */
       break; /* HCI_DISCONNECTION_COMPLETE_EVT_CODE */
     }
@@ -702,7 +727,11 @@ SVCCTL_UserEvtFlowStatus_t SVCCTL_App_Notification(void *p_Pckt)
           HandleNotification.ConnectionHandle = BleApplicationContext.BleApplicationContext_legacy.connectionHandle;
           P2PS_APP_Notification(&HandleNotification);
           /* USER CODE BEGIN HCI_EVT_LE_CONN_COMPLETE */
-
+          // Client connected - trigger immediate name change
+          APP_DBG_MSG("Client connected - triggering name change\n");
+          HW_TS_Stop(Name_Change_timer_Id); // Stop current timer
+          name_change_pending = 1;
+          UTIL_SEQ_SetTask(1 << CFG_TASK_NAME_UPDATE_ID, CFG_SCH_PRIO_0);
           /* USER CODE END HCI_EVT_LE_CONN_COMPLETE */
           break; /* HCI_LE_CONNECTION_COMPLETE_SUBEVT_CODE */
         }
@@ -1219,13 +1248,18 @@ static void Adv_Request(APP_BLE_ConnStatus_t NewStatus)
 
   BleApplicationContext.Device_Connection_Status = NewStatus;
   /* Start Fast or Low Power Advertising */
+  // Set scan response first (before making discoverable)
+  if (scan_response_length > 0) {
+      hci_le_set_scan_response_data(scan_response_length, scan_response_data);
+  }
+
   ret = aci_gap_set_discoverable(ADV_IND,
                                  Min_Inter,
                                  Max_Inter,
                                  CFG_BLE_ADDRESS_TYPE,
                                  NO_WHITE_LIST_USE, /* use white list */
-                                 sizeof(a_LocalName),
-                                 (uint8_t*) &a_LocalName,
+                                 0,                    // LocalNameLen = 0 (use scan response instead)
+                                 NULL,                 // LocalName = NULL (use scan response instead)
                                  BleApplicationContext.BleApplicationContext_legacy.advtServUUIDlen,
                                  BleApplicationContext.BleApplicationContext_legacy.advtServUUID,
                                  0,
@@ -1318,7 +1352,79 @@ const uint8_t* BleGetBdAddress(void)
 }
 
 /* USER CODE BEGIN FD_LOCAL_FUNCTION */
+static void Update_Device_Name_With_Counter(void)
+{
+    tBleStatus ret;
 
+    // Create the new name
+    snprintf(current_device_name, sizeof(current_device_name), "%s%04d", base_name, current_name_counter);
+
+    // Prepare scan response data with complete local name
+    uint8_t name_len = strlen(current_device_name);
+    scan_response_length = name_len + 2; // +2 for length and AD type
+
+    if (scan_response_length <= 31) {
+        scan_response_data[0] = name_len + 1; // Length includes AD type
+        scan_response_data[1] = AD_TYPE_COMPLETE_LOCAL_NAME;
+        memcpy(&scan_response_data[2], current_device_name, name_len);
+
+        // Set scan response data
+        ret = hci_le_set_scan_response_data(scan_response_length, scan_response_data);
+        if (ret == BLE_STATUS_SUCCESS) {
+            APP_DBG_MSG("Scan response updated with name: %s\n", current_device_name);
+        } else {
+            APP_DBG_MSG("Failed to set scan response data: 0x%x\n", ret);
+        }
+    }
+
+    // Update GATT device name characteristic if connected
+    if (BleApplicationContext.Device_Connection_Status == APP_BLE_CONNECTED_SERVER) {
+        ret = aci_gatt_update_char_value(BleApplicationContext.BleApplicationContext_legacy.gapServiceHandle,
+                                        BleApplicationContext.BleApplicationContext_legacy.devNameCharHandle,
+                                        0,
+                                        name_len,
+                                        (uint8_t*)current_device_name);
+        if (ret == BLE_STATUS_SUCCESS) {
+            APP_DBG_MSG("GATT device name updated: %s\n", current_device_name);
+        }
+    }
+}
+
+static void Name_Change_Timeout(void)
+{
+    name_change_pending = 1;
+    UTIL_SEQ_SetTask(1 << CFG_TASK_NAME_UPDATE_ID, CFG_SCH_PRIO_0); // You'll need to define this task ID
+}
+
+static void Process_Name_Change(void)
+{
+    if (name_change_pending) {
+        name_change_pending = 0;
+        current_name_counter++;
+
+        APP_DBG_MSG("Changing device name to: %s%04d\n", base_name, current_name_counter);
+
+        // Stop current advertising
+        if (BleApplicationContext.Device_Connection_Status == APP_BLE_FAST_ADV ||
+            BleApplicationContext.Device_Connection_Status == APP_BLE_LP_ADV) {
+
+            tBleStatus ret = aci_gap_set_non_discoverable();
+            if (ret == BLE_STATUS_SUCCESS) {
+                // Update name and restart advertising
+                Update_Device_Name_With_Counter();
+
+                // Restart advertising with new name
+                Adv_Request(APP_BLE_FAST_ADV);
+            }
+        } else {
+            // Just update the name
+            Update_Device_Name_With_Counter();
+        }
+
+        // Restart timer for next name change (1 minute = 60000000 microseconds)
+        HW_TS_Start(Name_Change_timer_Id, (60*1000*1000/CFG_TS_TICK_VAL));
+    }
+}
 /* USER CODE END FD_LOCAL_FUNCTION */
 
 /*************************************************************
