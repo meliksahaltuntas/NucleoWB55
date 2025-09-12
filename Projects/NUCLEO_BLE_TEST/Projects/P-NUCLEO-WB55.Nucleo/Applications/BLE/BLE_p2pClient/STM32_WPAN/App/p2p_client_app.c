@@ -156,6 +156,8 @@ static P2P_ClientContext_t aP2PClientContext[BLE_CFG_CLT_MAX_NBR_CB];
  */
 /* USER CODE BEGIN PV */
 static P2P_Client_App_Context_t P2P_Client_App_Context;
+static uint8_t target_device_found = 0;
+static char target_device_name[32];
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -224,7 +226,10 @@ void P2PC_APP_Notification(P2PC_APP_ConnHandle_Not_evt_t *pNotification)
 
   case PEER_CONN_HANDLE_EVT :
 /* USER CODE BEGIN PEER_CONN_HANDLE_EVT */
-    P2P_Client_App_Context.ConnectionHandle = pNotification->ConnectionHandle;
+	    P2P_Client_App_Context.ConnectionHandle = pNotification->ConnectionHandle;
+	    APP_DBG_MSG("=== CLIENT SUCCESSFULLY CONNECTED ===\n");
+	    APP_DBG_MSG("Connected to server: %s\n", target_device_name);
+	    APP_DBG_MSG("====================================\n");
 /* USER CODE END PEER_CONN_HANDLE_EVT */
       break;
 
@@ -626,6 +631,31 @@ uint8_t P2P_Client_APP_Get_State( void ) {
  * @param  pFeatureValue: The address of the new value to be written
  * @retval None
  */
+uint8_t Check_Device_Name(uint8_t *adv_data, uint8_t data_length)
+{
+    uint8_t i = 0;
+    while (i < data_length) {
+        uint8_t field_length = adv_data[i];
+        uint8_t field_type = adv_data[i + 1];
+
+        if (field_type == AD_TYPE_COMPLETE_LOCAL_NAME || field_type == AD_TYPE_SHORTENED_LOCAL_NAME) {
+            // Check if name starts with "Dairy Tag "
+            if (field_length >= 10) { // "Dairy Tag " is 10 chars
+                if (memcmp(&adv_data[i + 2], "Dairy Tag ", 10) == 0) {
+                    // Copy the full name
+                    memcpy(target_device_name, &adv_data[i + 2], field_length - 1);
+                    target_device_name[field_length - 1] = '\0';
+
+                    APP_DBG_MSG("=== CLIENT FOUND TARGET ===\n");
+                    APP_DBG_MSG("Connecting to server: %s\n", target_device_name);
+                    return 1;
+                }
+            }
+        }
+        i += field_length + 1;
+    }
+    return 0;
+}
 tBleStatus Write_Char(uint16_t UUID, uint8_t Service_Instance, uint8_t *pPayload)
 {
   tBleStatus ret = BLE_STATUS_INVALID_PARAMS;

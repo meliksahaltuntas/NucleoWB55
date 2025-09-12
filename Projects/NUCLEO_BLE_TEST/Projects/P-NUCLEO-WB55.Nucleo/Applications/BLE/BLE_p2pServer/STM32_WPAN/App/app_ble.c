@@ -7,7 +7,7 @@
   ******************************************************************************
   * @attention
   *
-  * Copyright (c) 2019-2021 STMicroelectronics.
+  * Copyright  2019-2021 STMicroelectronics.
   * All rights reserved.
   *
   * This software is licensed under terms that can be found in the LICENSE file
@@ -239,7 +239,7 @@ static const char a_LocalName[] = {AD_TYPE_COMPLETE_LOCAL_NAME , 'P', '2', 'P', 
 uint8_t a_ManufData[14] = {sizeof(a_ManufData)-1,
                            AD_TYPE_MANUFACTURER_SPECIFIC_DATA,
                            0x01,                               /*SKD version */
-                           CFG_DEV_ID_P2P_SERVER1,             /* STM32WB - P2P Server 1*/
+                           CFG_DEV_ID_P2P_SERVER1,      /* STM32WB - P2P Server 1*/
                            0x00,                               /* GROUP A Feature */
                            0x00,                               /* GROUP A Feature */
                            0x00,                               /* GROUP B Feature */
@@ -260,7 +260,7 @@ static const char a_LocalName[] = {AD_TYPE_COMPLETE_LOCAL_NAME, 'P', '2', 'P', '
 uint8_t a_ManufData[14] = {sizeof(a_ManufData)-1,
                            AD_TYPE_MANUFACTURER_SPECIFIC_DATA,
                            0x01,                               /*SKD version */
-                           CFG_DEV_ID_P2P_SERVER2,             /* STM32WB - P2P Server 2*/
+                           CFG_DEV_ID_P2P_SERVER2,      /* STM32WB - P2P Server 2*/
                            0x00,                               /* GROUP A Feature */
                            0x00,                               /* GROUP A Feature */
                            0x00,                               /* GROUP B Feature */
@@ -280,7 +280,7 @@ static const char a_LocalName[] = {AD_TYPE_COMPLETE_LOCAL_NAME, 'P', '2', 'P', '
 uint8_t a_ManufData[14] = {sizeof(a_ManufData)-1,
                            AD_TYPE_MANUFACTURER_SPECIFIC_DATA,
                            0x01,                               /*SKD version */
-                           CFG_DEV_ID_P2P_SERVER3,             /* STM32WB - P2P Server 3*/
+                           CFG_DEV_ID_P2P_SERVER3,      /* STM32WB - P2P Server 3*/
                            0x00,                               /* GROUP A Feature */
                            0x00,                               /* GROUP A Feature */
                            0x00,                               /* GROUP B Feature */
@@ -299,7 +299,7 @@ static const char a_LocalName[] = {AD_TYPE_COMPLETE_LOCAL_NAME, 'P', '2', 'P', '
 uint8_t a_ManufData[14] = {sizeof(a_ManufData)-1,
                            AD_TYPE_MANUFACTURER_SPECIFIC_DATA,
                            0x01,                               /*SKD version */
-                           CFG_DEV_ID_P2P_SERVER4,             /* STM32WB - P2P Server 4*/
+                           CFG_DEV_ID_P2P_SERVER4,      /* STM32WB - P2P Server 4*/
                            0x00,                               /* GROUP A Feature */
                            0x00,                               /* GROUP A Feature */
                            0x00,                               /* GROUP B Feature */
@@ -318,7 +318,7 @@ static const char a_LocalName[] = {AD_TYPE_COMPLETE_LOCAL_NAME, 'P', '2', 'P', '
 uint8_t a_ManufData[14] = {sizeof(a_ManufData)-1,
                            AD_TYPE_MANUFACTURER_SPECIFIC_DATA,
                            0x01,                               /*SKD version */
-                           CFG_DEV_ID_P2P_SERVER5,             /* STM32WB - P2P Server 5*/
+                           CFG_DEV_ID_P2P_SERVER5,      /* STM32WB - P2P Server 5*/
                            0x00,                               /* GROUP A Feature */
                            0x00,                               /* GROUP A Feature */
                            0x00,                               /* GROUP B Feature */
@@ -337,7 +337,7 @@ static const char a_LocalName[] = {AD_TYPE_COMPLETE_LOCAL_NAME, 'P', '2', 'P', '
 uint8_t a_ManufData[14] = {sizeof(a_ManufData)-1,
                            AD_TYPE_MANUFACTURER_SPECIFIC_DATA,
                            0x01,                               /*SKD version */
-                           CFG_DEV_ID_P2P_SERVER6,             /* STM32WB - P2P Server 6*/
+                           CFG_DEV_ID_P2P_SERVER6,      /* STM32WB - P2P Server 6*/
                            0x00,                               /* GROUP A Feature */
                            0x00,                               /* GROUP A Feature */
                            0x00,                               /* GROUP B Feature */
@@ -353,15 +353,18 @@ uint8_t a_ManufData[14] = {sizeof(a_ManufData)-1,
 
 /* USER CODE BEGIN PV */
 // Name change functionality
-static uint16_t current_name_counter = 0;
-static uint8_t Name_Change_timer_Id;
-static const char base_name[] = "Dairy Tag ";
+
+
+static const char base_name[] = "DairyTag";
 static char current_device_name[32]; // Buffer for full name
-static uint8_t name_change_pending = 0;
+
 
 // Scan response data for long name
 static uint8_t scan_response_data[31];
 static uint8_t scan_response_length = 0;
+// Add these variables for reset functionality
+static uint8_t reset_pending = 0;
+static uint8_t Reset_timer_Id;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -381,8 +384,8 @@ static void Connection_Interval_Update_Req(void);
 
 /* USER CODE BEGIN PFP */
 static void Update_Device_Name_With_Counter(void);
-static void Name_Change_Timeout(void);
-static void Process_Name_Change(void);
+static void Process_System_Reset(void);
+static void Reset_System_Timeout(void);
 /* USER CODE END PFP */
 
 /* External variables --------------------------------------------------------*/
@@ -550,17 +553,21 @@ void APP_BLE_Init(void)
 
   /* USER CODE BEGIN APP_BLE_Init_2 */
   // Initialize name change system
-  current_name_counter = 0;
+
   Update_Device_Name_With_Counter();
 
-  // Create timer for name changes (1 minute intervals)
-  HW_TS_Create(CFG_TIM_PROC_ID_ISR, &Name_Change_timer_Id, hw_ts_SingleShot, Name_Change_Timeout);
 
-  // Register task for name change processing
-  UTIL_SEQ_RegTask(1<<CFG_TASK_NAME_UPDATE_ID, UTIL_SEQ_RFU, Process_Name_Change);
 
-  // Start the name change timer (1 minute)
-  HW_TS_Start(Name_Change_timer_Id, (60*1000*1000/CFG_TS_TICK_VAL));
+
+  // Create timer for system reset
+  HW_TS_Create(CFG_TIM_PROC_ID_ISR, &Reset_timer_Id, hw_ts_SingleShot, Reset_System_Timeout);
+
+  // Register tasks
+
+  UTIL_SEQ_RegTask(1<<CFG_TASK_SYSTEM_RESET_ID, UTIL_SEQ_RFU, Process_System_Reset);
+
+  // Start the reset timer (1 minute)
+  HW_TS_Start(Reset_timer_Id, (60*1000*1000/CFG_TS_TICK_VAL));
   /* USER CODE END APP_BLE_Init_2 */
 
   return;
@@ -620,11 +627,17 @@ SVCCTL_UserEvtFlowStatus_t SVCCTL_App_Notification(void *p_Pckt)
       HandleNotification.ConnectionHandle = BleApplicationContext.BleApplicationContext_legacy.connectionHandle;
       P2PS_APP_Notification(&HandleNotification);
       /* USER CODE BEGIN EVT_DISCONN_COMPLETE */
-      // Client disconnected - restart name change timer
-      APP_DBG_MSG("Client disconnected - restarting name change timer\n");
-      HW_TS_Stop(Name_Change_timer_Id);
-      HW_TS_Start(Name_Change_timer_Id, (60*1000*1000/CFG_TS_TICK_VAL));
-      /* USER CODE END EVT_DISCONN_COMPLETE */
+            // Client disconnected - trigger immediate reset
+            APP_DBG_MSG("=== CLIENT DISCONNECTED ===\n");
+            APP_DBG_MSG("Client disconnected, triggering immediate reset...\n");
+
+            // Stop all timers
+
+            HW_TS_Stop(Reset_timer_Id);
+
+            // Trigger immediate reset after disconnect
+            UTIL_SEQ_SetTask(1 << CFG_TASK_SYSTEM_RESET_ID, CFG_SCH_PRIO_0);
+            /* USER CODE END EVT_DISCONN_COMPLETE */
       break; /* HCI_DISCONNECTION_COMPLETE_EVT_CODE */
     }
 
@@ -706,8 +719,8 @@ SVCCTL_UserEvtFlowStatus_t SVCCTL_App_Notification(void *p_Pckt)
           APP_DBG_MSG("     - Connection Interval:   %.2f ms\n     - Connection latency:    %d\n     - Supervision Timeout: %d ms\n\r",
                       p_connection_complete_event->Conn_Interval*1.25,
                       p_connection_complete_event->Conn_Latency,
-                      p_connection_complete_event->Supervision_Timeout*10
-                     );
+                      p_connection_complete_event->Supervision_Timeout*10)
+                     ;
 
           if (BleApplicationContext.Device_Connection_Status == APP_BLE_LP_CONNECTING)
           {
@@ -727,13 +740,13 @@ SVCCTL_UserEvtFlowStatus_t SVCCTL_App_Notification(void *p_Pckt)
           HandleNotification.ConnectionHandle = BleApplicationContext.BleApplicationContext_legacy.connectionHandle;
           P2PS_APP_Notification(&HandleNotification);
           /* USER CODE BEGIN HCI_EVT_LE_CONN_COMPLETE */
-          // Client connected - trigger immediate name change
-          APP_DBG_MSG("Client connected - triggering name change\n");
-          HW_TS_Stop(Name_Change_timer_Id); // Stop current timer
-          name_change_pending = 1;
-          UTIL_SEQ_SetTask(1 << CFG_TASK_NAME_UPDATE_ID, CFG_SCH_PRIO_0);
-          /* USER CODE END HCI_EVT_LE_CONN_COMPLETE */
-          break; /* HCI_LE_CONNECTION_COMPLETE_SUBEVT_CODE */
+                    // Client connected - stop reset timer, wait for disconnect
+                    APP_DBG_MSG("=== CLIENT CONNECTED ===\n");
+                    APP_DBG_MSG("Client connected to server, stopping reset timer...\n");
+
+                    /* USER CODE END HCI_EVT_LE_CONN_COMPLETE */
+          break;
+
         }
 
         default:
@@ -759,36 +772,36 @@ SVCCTL_UserEvtFlowStatus_t SVCCTL_App_Notification(void *p_Pckt)
         /* USER CODE BEGIN ecode */
         aci_gap_pairing_complete_event_rp0 *pairing_complete;
 
-        case ACI_GAP_LIMITED_DISCOVERABLE_VSEVT_CODE: 
+        case ACI_GAP_LIMITED_DISCOVERABLE_VSEVT_CODE:
           APP_DBG_MSG(">>== ACI_GAP_LIMITED_DISCOVERABLE_VSEVT_CODE \n");
           break; /* ACI_GAP_LIMITED_DISCOVERABLE_VSEVT_CODE */
-          
-        case ACI_GAP_PASS_KEY_REQ_VSEVT_CODE:  
+
+        case ACI_GAP_PASS_KEY_REQ_VSEVT_CODE:
           APP_DBG_MSG(">>== ACI_GAP_PASS_KEY_REQ_VSEVT_CODE \n");
-		  
+
           ret = aci_gap_pass_key_resp(BleApplicationContext.BleApplicationContext_legacy.connectionHandle,123456);
           if (ret != BLE_STATUS_SUCCESS)
           {
             APP_DBG_MSG("==>> aci_gap_pass_key_resp : Fail, reason: 0x%x\n", ret);
-          } 
-          else 
+          }
+          else
           {
             APP_DBG_MSG("==>> aci_gap_pass_key_resp : Success \n");
           }
           break; /* ACI_GAP_PASS_KEY_REQ_VSEVT_CODE */
 
-        case ACI_GAP_AUTHORIZATION_REQ_VSEVT_CODE:    
+        case ACI_GAP_AUTHORIZATION_REQ_VSEVT_CODE:
           APP_DBG_MSG(">>== ACI_GAP_AUTHORIZATION_REQ_VSEVT_CODE\n");
           break; /* ACI_GAP_AUTHORIZATION_REQ_VSEVT_CODE */
 
-                case ACI_GAP_BOND_LOST_VSEVT_CODE:    
+                case ACI_GAP_BOND_LOST_VSEVT_CODE:
           APP_DBG_MSG("==>> ACI_GAP_BOND_LOST_VSEVT_CODE \n");
           ret = aci_gap_allow_rebond(BleApplicationContext.BleApplicationContext_legacy.connectionHandle);
           if (ret != BLE_STATUS_SUCCESS)
           {
             APP_DBG_MSG("==>> aci_gap_allow_rebond : Fail, reason: 0x%x\n", ret);
-          } 
-          else 
+          }
+          else
           {
             APP_DBG_MSG("==>> aci_gap_allow_rebond : Success \n");
           }
@@ -797,10 +810,10 @@ SVCCTL_UserEvtFlowStatus_t SVCCTL_App_Notification(void *p_Pckt)
         case ACI_GAP_ADDR_NOT_RESOLVED_VSEVT_CODE:
           APP_DBG_MSG(">>== ACI_GAP_ADDR_NOT_RESOLVED_VSEVT_CODE \n");
           break; /* ACI_GAP_ADDR_NOT_RESOLVED_VSEVT_CODE */
-      
+
         case (ACI_GAP_KEYPRESS_NOTIFICATION_VSEVT_CODE):
           APP_DBG_MSG(">>== ACI_GAP_KEYPRESS_NOTIFICATION_VSEVT_CODE\n");
-          break; /* ACI_GAP_KEYPRESS_NOTIFICATION_VSEVT_CODE */    
+          break; /* ACI_GAP_KEYPRESS_NOTIFICATION_VSEVT_CODE */
 
         case (ACI_GAP_NUMERIC_COMPARISON_VALUE_VSEVT_CODE):
           APP_DBG_MSG(">>== ACI_GAP_NUMERIC_COMPARISON_VALUE_VSEVT_CODE\n");
@@ -812,8 +825,8 @@ SVCCTL_UserEvtFlowStatus_t SVCCTL_App_Notification(void *p_Pckt)
           if (ret != BLE_STATUS_SUCCESS)
           {
             APP_DBG_MSG("==>> aci_gap_numeric_comparison_value_confirm_yesno-->YES : Fail, reason: 0x%x\n", ret);
-          } 
-          else 
+          }
+          else
           {
             APP_DBG_MSG("==>> aci_gap_numeric_comparison_value_confirm_yesno-->YES : Success \n");
           }
@@ -834,7 +847,7 @@ SVCCTL_UserEvtFlowStatus_t SVCCTL_App_Notification(void *p_Pckt)
           }
           APP_DBG_MSG("\n");
         }
-          break;    
+          break;
         /* USER CODE END ecode */
 
         /**
@@ -905,10 +918,10 @@ void APP_BLE_Key_Button1_Action(void)
 
 void APP_BLE_Key_Button2_Action(void)
 {
-#if (L2CAP_REQUEST_NEW_CONN_PARAM != 0 )    
+#if (L2CAP_REQUEST_NEW_CONN_PARAM != 0)
   UTIL_SEQ_SetTask( 1<<CFG_TASK_CONN_UPDATE_REG_ID, CFG_SCH_PRIO_0);
 #endif
-  
+
   return;
 }
 
@@ -1005,17 +1018,17 @@ static void Ble_Hci_Gap_Gatt_Init(void)
   ret = aci_hal_write_config_data(CONFIG_DATA_RANDOM_ADDRESS_OFFSET, CONFIG_DATA_RANDOM_ADDRESS_LEN, (uint8_t*)a_srd_bd_addr);
   if (ret != BLE_STATUS_SUCCESS)
   {
-    APP_DBG_MSG("  Fail   : aci_hal_write_config_data command - CONFIG_DATA_RANDOM_ADDRESS_OFFSET, result: 0x%x \n", ret);
+    APP_DBG_MSG("  Fail   : aci_hal_write_config_data command - CONFIG_DATA_RANDOM_ADDRESS_OFFSET, result: 0x%x \n"), ret);
   }
   else
   {
     APP_DBG_MSG("  Success: aci_hal_write_config_data command - CONFIG_DATA_RANDOM_ADDRESS_OFFSET\n");
     APP_DBG_MSG("  Random Bluetooth Address: %02x:%02x:%02x:%02x:%02x:%02x\n", (uint8_t)(a_srd_bd_addr[1] >> 8),
-                                                                               (uint8_t)(a_srd_bd_addr[1]),
-                                                                               (uint8_t)(a_srd_bd_addr[0] >> 24),
-                                                                               (uint8_t)(a_srd_bd_addr[0] >> 16),
-                                                                               (uint8_t)(a_srd_bd_addr[0] >> 8),
-                                                                               (uint8_t)(a_srd_bd_addr[0]));
+                                                                         (uint8_t)(a_srd_bd_addr[1]),
+                                                                         (uint8_t)(a_srd_bd_addr[0] >> 24),
+                                                                         (uint8_t)(a_srd_bd_addr[0] >> 16),
+                                                                         (uint8_t)(a_srd_bd_addr[0] >> 8),
+                                                                         (uint8_t)(a_srd_bd_addr[0]));
   }
 #endif /* CFG_BLE_ADDRESS_TYPE != GAP_PUBLIC_ADDR */
 
@@ -1248,22 +1261,22 @@ static void Adv_Request(APP_BLE_ConnStatus_t NewStatus)
 
   BleApplicationContext.Device_Connection_Status = NewStatus;
   /* Start Fast or Low Power Advertising */
-  // Set scan response first (before making discoverable)
-  if (scan_response_length > 0) {
-      hci_le_set_scan_response_data(scan_response_length, scan_response_data);
-  }
-
   ret = aci_gap_set_discoverable(ADV_IND,
-                                 Min_Inter,
-                                 Max_Inter,
-                                 CFG_BLE_ADDRESS_TYPE,
-                                 NO_WHITE_LIST_USE, /* use white list */
-                                 0,                    // LocalNameLen = 0 (use scan response instead)
-                                 NULL,                 // LocalName = NULL (use scan response instead)
-                                 BleApplicationContext.BleApplicationContext_legacy.advtServUUIDlen,
-                                 BleApplicationContext.BleApplicationContext_legacy.advtServUUID,
-                                 0,
-                                 0);
+                                   Min_Inter,
+                                   Max_Inter,
+                                   CFG_BLE_ADDRESS_TYPE,
+                                   NO_WHITE_LIST_USE, /* use white list */
+                                   strlen(current_device_name),    // Use device name length
+                                   (uint8_t*)current_device_name,  // Use device name
+                                   BleApplicationContext.BleApplicationContext_legacy.advtServUUIDlen,
+                                   BleApplicationContext.BleApplicationContext_legacy.advtServUUID,
+                                   0,
+                                   0);
+
+    // Set scan response after making discoverable
+    if (scan_response_length > 0) {
+        hci_le_set_scan_response_data(scan_response_length, scan_response_data);
+    }
   if (ret != BLE_STATUS_SUCCESS)
   {
     APP_DBG_MSG("==>> aci_gap_set_discoverable - fail, result: 0x%x \n", ret);
@@ -1355,75 +1368,79 @@ const uint8_t* BleGetBdAddress(void)
 static void Update_Device_Name_With_Counter(void)
 {
     tBleStatus ret;
+    static uint16_t current_name_counter;
+    // Generate random 4-digit number (0000-9999)
+    uint32_t random_val;
+    HAL_RNG_GenerateRandomNumber(&hrng, &random_val);
+    current_name_counter = random_val % 10000;
 
     // Create the new name
     snprintf(current_device_name, sizeof(current_device_name), "%s%04d", base_name, current_name_counter);
 
+    // Print server reset message
+    APP_DBG_MSG("=== SERVER RESET ===\n");
+    APP_DBG_MSG("New server name: %s\n", current_device_name);
+
     // Prepare scan response data with complete local name
     uint8_t name_len = strlen(current_device_name);
-    scan_response_length = name_len + 2; // +2 for length and AD type
+    scan_response_length = name_len + 2;
 
     if (scan_response_length <= 31) {
-        scan_response_data[0] = name_len + 1; // Length includes AD type
+        scan_response_data[0] = name_len + 1;
         scan_response_data[1] = AD_TYPE_COMPLETE_LOCAL_NAME;
         memcpy(&scan_response_data[2], current_device_name, name_len);
 
-        // Set scan response data
         ret = hci_le_set_scan_response_data(scan_response_length, scan_response_data);
         if (ret == BLE_STATUS_SUCCESS) {
             APP_DBG_MSG("Scan response updated with name: %s\n", current_device_name);
-        } else {
-            APP_DBG_MSG("Failed to set scan response data: 0x%x\n", ret);
         }
     }
 
-    // Update GATT device name characteristic if connected
     if (BleApplicationContext.Device_Connection_Status == APP_BLE_CONNECTED_SERVER) {
         ret = aci_gatt_update_char_value(BleApplicationContext.BleApplicationContext_legacy.gapServiceHandle,
                                         BleApplicationContext.BleApplicationContext_legacy.devNameCharHandle,
                                         0,
                                         name_len,
                                         (uint8_t*)current_device_name);
-        if (ret == BLE_STATUS_SUCCESS) {
-            APP_DBG_MSG("GATT device name updated: %s\n", current_device_name);
-        }
     }
 }
-
-static void Name_Change_Timeout(void)
+static void Reset_System_Timeout(void)
 {
-    name_change_pending = 1;
-    UTIL_SEQ_SetTask(1 << CFG_TASK_NAME_UPDATE_ID, CFG_SCH_PRIO_0); // You'll need to define this task ID
+    reset_pending = 1;
+    UTIL_SEQ_SetTask(1 << CFG_TASK_SYSTEM_RESET_ID, CFG_SCH_PRIO_0);
 }
 
-static void Process_Name_Change(void)
+static void Process_System_Reset(void)
 {
-    if (name_change_pending) {
-        name_change_pending = 0;
-        current_name_counter++;
 
-        APP_DBG_MSG("Changing device name to: %s%04d\n", base_name, current_name_counter);
 
-        // Stop current advertising
-        if (BleApplicationContext.Device_Connection_Status == APP_BLE_FAST_ADV ||
-            BleApplicationContext.Device_Connection_Status == APP_BLE_LP_ADV) {
+    APP_DBG_MSG("=== COMPLETE SYSTEM RESET ===\n");
+    APP_DBG_MSG("Performing full system reset with new identity...\n");
 
-            tBleStatus ret = aci_gap_set_non_discoverable();
-            if (ret == BLE_STATUS_SUCCESS) {
-                // Update name and restart advertising
-                Update_Device_Name_With_Counter();
 
-                // Restart advertising with new name
-                Adv_Request(APP_BLE_FAST_ADV);
-            }
-        } else {
-            // Just update the name
-            Update_Device_Name_With_Counter();
-        }
 
-        // Restart timer for next name change (1 minute = 60000000 microseconds)
-        HW_TS_Start(Name_Change_timer_Id, (60*1000*1000/CFG_TS_TICK_VAL));
+    // Stop all timers
+
+    HW_TS_Stop(Reset_timer_Id);
+
+    // Stop advertising and disconnect if needed
+    aci_gap_set_non_discoverable();
+
+    // Force disconnect if connected
+    if (BleApplicationContext.BleApplicationContext_legacy.connectionHandle != 0xFFFF) {
+        aci_gap_terminate(BleApplicationContext.BleApplicationContext_legacy.connectionHandle, 0x13);
+        BleApplicationContext.BleApplicationContext_legacy.connectionHandle = 0xFFFF;
     }
+
+    // Wait a moment for clean disconnect
+    HAL_Delay(100);
+
+    // Perform actual system reset
+    APP_DBG_MSG("System resetting in 3...2...1...\n");
+    HAL_Delay(1000);
+
+    // Trigger hardware reset
+    NVIC_SystemReset();
 }
 /* USER CODE END FD_LOCAL_FUNCTION */
 
@@ -1438,24 +1455,6 @@ static void Adv_Cancel(void)
   BSP_LED_Off(LED_GREEN);
   /* USER CODE END Adv_Cancel_1 */
 
-  if (BleApplicationContext.Device_Connection_Status != APP_BLE_CONNECTED_SERVER)
-  {
-    tBleStatus ret = BLE_STATUS_INVALID_PARAMS;
-
-    ret = aci_gap_set_non_discoverable();
-
-    BleApplicationContext.Device_Connection_Status = APP_BLE_IDLE;
-    if (ret != BLE_STATUS_SUCCESS)
-    {
-      APP_DBG_MSG("** STOP ADVERTISING **  Failed \r\n\r");
-    }
-    else
-    {
-      APP_DBG_MSG("  \r\n\r");
-      APP_DBG_MSG("** STOP ADVERTISING **  \r\n\r");
-    }
-  }
-
   /* USER CODE BEGIN Adv_Cancel_2 */
 
   /* USER CODE END Adv_Cancel_2 */
@@ -1466,7 +1465,6 @@ static void Adv_Cancel(void)
 static void Adv_Cancel_Req(void)
 {
   /* USER CODE BEGIN Adv_Cancel_Req_1 */
-
   /* USER CODE END Adv_Cancel_Req_1 */
 
   UTIL_SEQ_SetTask(1 << CFG_TASK_ADV_CANCEL_ID, CFG_SCH_PRIO_0);
@@ -1633,3 +1631,4 @@ void SVCCTL_ResumeUserEventFlow(void)
 /* USER CODE BEGIN FD_WRAP_FUNCTIONS */
 
 /* USER CODE END FD_WRAP_FUNCTIONS */
+

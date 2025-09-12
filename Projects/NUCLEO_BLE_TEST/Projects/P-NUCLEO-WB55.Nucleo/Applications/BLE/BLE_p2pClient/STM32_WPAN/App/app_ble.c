@@ -220,7 +220,8 @@ APP_BLE_p2p_Conn_Update_req_t APP_BLE_p2p_Conn_Update_req;
 #endif
 
 /* USER CODE BEGIN PV */
-
+static uint8_t target_device_found = 0;
+extern char target_device_name[32];  // Bu satırı ekle
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -233,8 +234,9 @@ static void Scan_Request(void);
 static void Connect_Request(void);
 static void Switch_OFF_GPIO(void);
 
-/* USER CODE BEGIN PFP */
 
+/* USER CODE BEGIN PFP */
+uint8_t Check_Device_Name(uint8_t *adv_data, uint8_t data_length);
 /* USER CODE END PFP */
 
 /* External variables --------------------------------------------------------*/
@@ -577,7 +579,18 @@ SVCCTL_UserEvtFlowStatus_t SVCCTL_App_Notification(void *pckt)
             {
               uint8_t *adv_report_data;
               /* USER CODE BEGIN EVT_LE_ADVERTISING_REPORT */
-
+              if (BleApplicationContext.Device_Connection_Status == APP_BLE_IDLE) {
+                  if (Check_Device_Name(adv_report_data, event_data_size)) {
+                      BleApplicationContext.DeviceServerFound = 0x01;
+                      SERVER_REMOTE_ADDR_TYPE = le_advertising_event->Advertising_Report[0].Address_Type;
+                      SERVER_REMOTE_BDADDR[0] = le_advertising_event->Advertising_Report[0].Address[0];
+                      SERVER_REMOTE_BDADDR[1] = le_advertising_event->Advertising_Report[0].Address[1];
+                      SERVER_REMOTE_BDADDR[2] = le_advertising_event->Advertising_Report[0].Address[2];
+                      SERVER_REMOTE_BDADDR[3] = le_advertising_event->Advertising_Report[0].Address[3];
+                      SERVER_REMOTE_BDADDR[4] = le_advertising_event->Advertising_Report[0].Address[4];
+                      SERVER_REMOTE_BDADDR[5] = le_advertising_event->Advertising_Report[0].Address[5];
+                  }
+              }
               /* USER CODE END EVT_LE_ADVERTISING_REPORT */
               le_advertising_event = (hci_le_advertising_report_event_rp0 *) meta_evt->data;
 
@@ -658,6 +671,19 @@ SVCCTL_UserEvtFlowStatus_t SVCCTL_App_Notification(void *pckt)
                   } /* end switch adtype */
                   k += adlength + 1;
                 } /* end while */
+                // Also check scan response data for device name
+                if (BleApplicationContext.Device_Connection_Status == APP_BLE_IDLE) {
+                    if (Check_Device_Name(adv_report_data, event_data_size)) {
+                        BleApplicationContext.DeviceServerFound = 0x01;
+                        SERVER_REMOTE_ADDR_TYPE = le_advertising_event->Advertising_Report[0].Address_Type;
+                        SERVER_REMOTE_BDADDR[0] = le_advertising_event->Advertising_Report[0].Address[0];
+                        SERVER_REMOTE_BDADDR[1] = le_advertising_event->Advertising_Report[0].Address[1];
+                        SERVER_REMOTE_BDADDR[2] = le_advertising_event->Advertising_Report[0].Address[2];
+                        SERVER_REMOTE_BDADDR[3] = le_advertising_event->Advertising_Report[0].Address[3];
+                        SERVER_REMOTE_BDADDR[4] = le_advertising_event->Advertising_Report[0].Address[4];
+                        SERVER_REMOTE_BDADDR[5] = le_advertising_event->Advertising_Report[0].Address[5];
+                    }
+                }
               } /* end if ADV_IND */
 
               /* USER CODE BEGIN EVT_LE_ADVERTISING_REPORT_2 */
