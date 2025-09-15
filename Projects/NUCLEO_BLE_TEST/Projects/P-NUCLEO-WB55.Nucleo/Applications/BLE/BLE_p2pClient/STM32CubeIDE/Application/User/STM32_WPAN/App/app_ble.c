@@ -50,18 +50,18 @@ typedef struct _tSecurityParams
   /**
    * IO capability of the device
    */
-  uint8_t ioCapability;
+  uint8_t ioCapability;// Giriş/çıkış kabiliyeti (klavye var mı?)
 
   /**
    * Authentication requirement of the device
    * Man In the Middle protection required?
    */
-  uint8_t mitm_mode;
+  uint8_t mitm_mode;// Ortadaki adam saldırısına karşı koruma
 
   /**
    * bonding mode of the device
    */
-  uint8_t bonding_mode;
+  uint8_t bonding_mode; // Cihazları eşleştirme modu
 
   /**
    * this variable indicates whether to use a fixed pin
@@ -69,23 +69,23 @@ typedef struct _tSecurityParams
    * requested to the application during the pairing process
    * 0 implies use fixed pin and 1 implies request for passkey
    */
-  uint8_t Use_Fixed_Pin;
+  uint8_t Use_Fixed_Pin;// Sabit PIN kullan mı?
 
   /**
    * minimum encryption key size requirement
    */
-  uint8_t encryptionKeySizeMin;
+  uint8_t encryptionKeySizeMin;// Minimum şifreleme anahtarı boyutu
 
   /**
    * maximum encryption key size requirement
    */
-  uint8_t encryptionKeySizeMax;
+  uint8_t encryptionKeySizeMax;// Maksimum şifreleme anahtarı boyutu
 
   /**
    * fixed pin to be used in the pairing process if
    * Use_Fixed_Pin is set to 1
    */
-  uint32_t Fixed_Pin;
+  uint32_t Fixed_Pin;  // Sabit PIN numarası
 
   /**
    * this flag indicates whether the host has to initiate
@@ -98,7 +98,7 @@ typedef struct _tSecurityParams
    * has to wait for paiirng to complete before doing any other
    * processing
    */
-  uint8_t initiateSecurity;
+  uint8_t initiateSecurity;// Güvenliği kim başlatsın?
 } tSecurityParams;
 
 /**
@@ -111,46 +111,46 @@ typedef struct _tBLEProfileGlobalContext
   /**
    * security requirements of the host
    */
-  tSecurityParams bleSecurityParam;
+  tSecurityParams bleSecurityParam;// Güvenlik ayarları
 
   /**
    * gap service handle
    */
-  uint16_t gapServiceHandle;
+  uint16_t gapServiceHandle;// GAP servis tanımlayıcısı
 
   /**
    * device name characteristic handle
    */
-  uint16_t devNameCharHandle;
+  uint16_t devNameCharHandle; // Cihaz ismi karakteristik tanımlayıcısı
 
   /**
    * appearance characteristic handle
    */
-  uint16_t appearanceCharHandle;
+  uint16_t appearanceCharHandle;// Görünüm karakteristik tanımlayıcısı
 
   /**
    * connection handle of the current active connection
    * When not in connection, the handle is set to 0xFFFF
    */
-  uint16_t connectionHandle;
+  uint16_t connectionHandle;// Bağlantı tanımlayıcısı (0xFFFF = bağlantı yok)
 
   /**
    * length of the UUID list to be used while advertising
    */
-  uint8_t advtServUUIDlen;
+  uint8_t advtServUUIDlen;// Reklam servis UUID uzunluğu
 
   /**
    * the UUID list to be used while advertising
    */
-  uint8_t advtServUUID[100];
+  uint8_t advtServUUID[100];// Reklam servis UUID'leri
 } BleGlobalContext_t;
 
 typedef struct
 {
-  BleGlobalContext_t BleApplicationContext_legacy;
-  APP_BLE_ConnStatus_t Device_Connection_Status;
-  uint8_t SwitchOffGPIO_timer_Id;
-  uint8_t DeviceServerFound;
+  BleGlobalContext_t BleApplicationContext_legacy;// Eski BLE bağlamı
+  APP_BLE_ConnStatus_t Device_Connection_Status; // Cihaz bağlantı durumu
+  uint8_t SwitchOffGPIO_timer_Id;// GPIO kapatma zamanlayıcı ID'si
+  uint8_t DeviceServerFound;// Server bulundu mu? (0=hayır, 1=evet)
 } BleApplicationContext_t;
 
 #if OOB_DEMO != 0
@@ -246,11 +246,14 @@ uint8_t Check_Device_Name(uint8_t *adv_data, uint8_t data_length);
 /* Functions Definition ------------------------------------------------------*/
 void APP_BLE_Init(void)
 {
-  SHCI_CmdStatus_t status;
-  tBleStatus ret = BLE_STATUS_INVALID_PARAMS;
+  // Bu fonksiyon programın başında bir kez çalışır
+  // Bluetooth'u hazır hale getirir
+  SHCI_CmdStatus_t status;// Komut durumu değişkeni
+  tBleStatus ret = BLE_STATUS_INVALID_PARAMS;// Bluetooth durumu
   /* USER CODE BEGIN APP_BLE_Init_1 */
 
   /* USER CODE END APP_BLE_Init_1 */
+  // app_conf.c de tanımlanması
   SHCI_C2_Ble_Init_Cmd_Packet_t ble_init_cmd_packet =
   {
     {{0,0,0}},                          /**< Header unused */
@@ -294,11 +297,13 @@ void APP_BLE_Init(void)
   /**
    * Do not allow standby in the application
    */
+  // Bu satır: "BLE çalışırken uyuma moduna girme" demektir
   UTIL_LPM_SetOffMode(1 << CFG_LPM_APP_BLE, UTIL_LPM_DISABLE);
 
   /**
    * Register the hci transport layer to handle BLE User Asynchronous Events
    */
+  // Bu satır: "Bluetooth'tan gelen mesajları işleyecek görevi kaydet" demektir
   UTIL_SEQ_RegTask(1<<CFG_TASK_HCI_ASYNCH_EVT_ID, UTIL_SEQ_RFU, hci_user_evt_proc);
 
   /**
@@ -358,7 +363,7 @@ void APP_BLE_Init(void)
   /* USER CODE BEGIN APP_BLE_Init_3 */
 
   /* USER CODE END APP_BLE_Init_3 */
-
+//BLE Paketi Gönderilir → Yeşil LED Yanar → 5ms Sonra Söner
 #if (OOB_DEMO != 0)
   HW_TS_Create(CFG_TIM_PROC_ID_ISR, &(BleApplicationContext.SwitchOffGPIO_timer_Id), hw_ts_SingleShot, Switch_OFF_GPIO);
 #endif
@@ -376,12 +381,15 @@ void APP_BLE_Init(void)
 }
 
 SVCCTL_UserEvtFlowStatus_t SVCCTL_App_Notification(void *pckt)
+   // Bu fonksiyon Bluetooth'tan gelen her mesajı işler
+   // Sanki postacı gibi - her mektup geldiğinde açar ve ne yapacağına karar verir
 {
   hci_event_pckt *event_pckt;
   evt_le_meta_event *meta_evt;
   hci_le_connection_complete_event_rp0 * connection_complete_event;
   evt_blecore_aci *blecore_evt;
   hci_le_advertising_report_event_rp0 * le_advertising_event;
+  // Gelen paketi ayrıştır (parse et)
   event_pckt = (hci_event_pckt*) ((hci_uart_pckt *) pckt)->data;
   hci_disconnection_complete_event_rp0 *cc = (void *) event_pckt->data;
   uint8_t result;

@@ -647,7 +647,7 @@ uint8_t P2P_Client_APP_Get_State( void ) {
  */
 static void AutoDisconnect_Timer_Callback(void) {
     // 2 saniye sonra çağrılacak fonksiyon
-    APP_DBG_MSG("-- 2 SANİYE GEÇTİ - BAĞLANTI KESİLİYOR --\n");
+    APP_DBG_MSG("-- 2 SANIYE GECTI - BAGLANTI KESILIYOR --\n");
 
     if (P2P_Client_App_Context.ConnectionHandle != 0x00) {
         // Bağlantıyı kes
