@@ -156,8 +156,9 @@ static P2P_ClientContext_t aP2PClientContext[BLE_CFG_CLT_MAX_NBR_CB];
  */
 /* USER CODE BEGIN PV */
 static P2P_Client_App_Context_t P2P_Client_App_Context;
-static uint8_t target_device_found = 0;
 static char target_device_name[32];
+static uint8_t DisconnectTimerId;     // Timer ID'si
+static uint8_t AutoDisconnectEnabled; // Otomatik disconnect aktif mi?
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -167,6 +168,7 @@ static SVCCTL_EvtAckStatus_t Event_Handler(void *Event);
 static tBleStatus Write_Char(uint16_t UUID, uint8_t Service_Instance, uint8_t *pPayload);
 static void Button_Trigger_Received( void );
 static void Update_Service( void );
+static void AutoDisconnect_Timer_Callback(void);
 /* USER CODE END PFP */
 
 /* Functions Definition ------------------------------------------------------*/
@@ -181,6 +183,8 @@ void P2PC_APP_Init(void)
 /* USER CODE BEGIN P2PC_APP_Init_1 */
   UTIL_SEQ_RegTask( 1<< CFG_TASK_SEARCH_SERVICE_ID, UTIL_SEQ_RFU, Update_Service );
   UTIL_SEQ_RegTask( 1<< CFG_TASK_SW1_BUTTON_PUSHED_ID, UTIL_SEQ_RFU, Button_Trigger_Received );
+  HW_TS_Create(CFG_TIM_PROC_ID_ISR, &DisconnectTimerId, hw_ts_SingleShot, AutoDisconnect_Timer_Callback);
+  AutoDisconnectEnabled = 0; // Başlangıçta kapalı
 
   /**
    * Initialize LedButton Service
@@ -226,16 +230,26 @@ void P2PC_APP_Notification(P2PC_APP_ConnHandle_Not_evt_t *pNotification)
 
   case PEER_CONN_HANDLE_EVT :
 /* USER CODE BEGIN PEER_CONN_HANDLE_EVT */
-	    P2P_Client_App_Context.ConnectionHandle = pNotification->ConnectionHandle;
-	    APP_DBG_MSG("=== CLIENT SUCCESSFULLY CONNECTED ===\n");
-	    APP_DBG_MSG("Connected to server: %s\n", target_device_name);
-	    APP_DBG_MSG("====================================\n");
+	  P2P_Client_App_Context.ConnectionHandle = pNotification->ConnectionHandle;
+	     APP_DBG_MSG("\n===========================================\n");
+	     APP_DBG_MSG("    CLIENT SUCCESSFULLY CONNECTED!\n");
+	     APP_DBG_MSG("    Connected to server: %s\n", target_device_name);
+	     APP_DBG_MSG("===========================================\n\n");
+	     AutoDisconnectEnabled = 1;
+	      HW_TS_Start(DisconnectTimerId, (uint32_t)(2 * 1000 * 1000 / CFG_TS_TICK_VAL)); // 2 saniye
+	      APP_DBG_MSG("-- 2 SANİYE SONRA OTOMATİK DISCONNECT --\n");
+	      break;
 /* USER CODE END PEER_CONN_HANDLE_EVT */
       break;
 
     case PEER_DISCON_HANDLE_EVT :
 /* USER CODE BEGIN PEER_DISCON_HANDLE_EVT */
       {
+    	  if (AutoDisconnectEnabled) {
+    	         HW_TS_Stop(DisconnectTimerId);
+    	         AutoDisconnectEnabled = 0;
+    	         APP_DBG_MSG("-- AUTO DISCONNECT TIMER DURDURULDU --\n");
+    	     }
       uint8_t index = 0;
       P2P_Client_App_Context.ConnectionHandle =  0x00;
       while((index < BLE_CFG_CLT_MAX_NBR_CB) &&
@@ -631,6 +645,20 @@ uint8_t P2P_Client_APP_Get_State( void ) {
  * @param  pFeatureValue: The address of the new value to be written
  * @retval None
  */
+static void AutoDisconnect_Timer_Callback(void) {
+    // 2 saniye sonra çağrılacak fonksiyon
+    APP_DBG_MSG("-- 2 SANİYE GEÇTİ - BAĞLANTI KESİLİYOR --\n");
+
+    if (P2P_Client_App_Context.ConnectionHandle != 0x00) {
+        // Bağlantıyı kes
+        aci_gap_terminate(P2P_Client_App_Context.ConnectionHandle,
+                         HCI_REMOTE_USER_TERMINATED_CONNECTION_ERR_CODE);
+
+        AutoDisconnectEnabled = 0; // Otomatik disconnect'i durdur
+        APP_DBG_MSG("-- DISCONNECT KOMUTU GÖNDERİLDİ --\n");
+        UTIL_SEQ_SetTask(1 << CFG_TASK_START_SCAN_ID, CFG_SCH_PRIO_0);
+    }
+}
 uint8_t Check_Device_Name(uint8_t *adv_data, uint8_t data_length)
 {
     uint8_t i = 0;
@@ -638,24 +666,28 @@ uint8_t Check_Device_Name(uint8_t *adv_data, uint8_t data_length)
         uint8_t field_length = adv_data[i];
         uint8_t field_type = adv_data[i + 1];
 
+        /* İsim alanını bul */
         if (field_type == AD_TYPE_COMPLETE_LOCAL_NAME || field_type == AD_TYPE_SHORTENED_LOCAL_NAME) {
-            // Check if name starts with "Dairy Tag "
-            if (field_length >= 10) { // "Dairy Tag " is 10 chars
-                if (memcmp(&adv_data[i + 2], "Dairy Tag ", 10) == 0) {
-                    // Copy the full name
+            if (field_length >= 9) { /* "DairyTag" 8 karakter + en az 1 rakam */
+                /* "DairyTag" ile başlıyor mu kontrol et */
+                if (memcmp(&adv_data[i + 2], "DairyTag", 8) == 0) {
+                    /* Tam ismi kaydet */
                     memcpy(target_device_name, &adv_data[i + 2], field_length - 1);
                     target_device_name[field_length - 1] = '\0';
 
-                    APP_DBG_MSG("=== CLIENT FOUND TARGET ===\n");
-                    APP_DBG_MSG("Connecting to server: %s\n", target_device_name);
+                    APP_DBG_MSG("=== CLIENT FOUND TARGET DEVICE ===\n");
+                    APP_DBG_MSG("Target device name: %s\n", target_device_name);
                     return 1;
                 }
             }
         }
         i += field_length + 1;
+        if (i >= data_length) break; /* Güvenlik kontrolü */
     }
     return 0;
 }
+
+// Clienttan servera veri göndermek için kullanılır
 tBleStatus Write_Char(uint16_t UUID, uint8_t Service_Instance, uint8_t *pPayload)
 {
   tBleStatus ret = BLE_STATUS_INVALID_PARAMS;

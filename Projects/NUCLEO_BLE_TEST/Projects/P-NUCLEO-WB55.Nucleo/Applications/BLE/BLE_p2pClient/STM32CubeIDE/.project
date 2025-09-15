@@ -288,16 +288,6 @@
 			<locationURI>$%7BPARENT-6-PROJECT_LOC%7D/Drivers/BSP/P-NUCLEO-WB55.Nucleo/stm32wbxx_nucleo.c</locationURI>
 		</link>
 		<link>
-			<name>Application/User/STM32_WPAN/App/app_ble.c</name>
-			<type>1</type>
-			<locationURI>$%7BPARENT-1-PROJECT_LOC%7D/STM32_WPAN/App/app_ble.c</locationURI>
-		</link>
-		<link>
-			<name>Application/User/STM32_WPAN/App/p2p_client_app.c</name>
-			<type>1</type>
-			<locationURI>$%7BPARENT-1-PROJECT_LOC%7D/STM32_WPAN/App/p2p_client_app.c</locationURI>
-		</link>
-		<link>
 			<name>Application/User/STM32_WPAN/Target/hw_ipcc.c</name>
 			<type>1</type>
 			<locationURI>$%7BPARENT-1-PROJECT_LOC%7D/STM32_WPAN/Target/hw_ipcc.c</locationURI>
