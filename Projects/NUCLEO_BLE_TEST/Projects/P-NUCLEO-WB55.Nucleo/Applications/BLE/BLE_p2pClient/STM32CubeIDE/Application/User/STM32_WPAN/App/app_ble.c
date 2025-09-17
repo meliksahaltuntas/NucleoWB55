@@ -10,7 +10,7 @@
   * Copyright (c) 2019-2021 STMicroelectronics.
   * All rights reserved.
   *
-  * This software is licensed under terms that can be found in the LICENSE file
+  * This software is licensed under  	terms that can be found in the LICENSE file
   * in the root directory of this software component.
   * If no LICENSE file comes with this software, it is provided AS-IS.
   *
@@ -220,6 +220,7 @@ APP_BLE_p2p_Conn_Update_req_t APP_BLE_p2p_Conn_Update_req;
 #endif
 
 /* USER CODE BEGIN PV */
+static char target_device_name[32]; // Target device ismi için buffer
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -375,7 +376,10 @@ void APP_BLE_Init(void)
   UTIL_SEQ_SetTask(1 << CFG_TASK_START_SCAN_ID, CFG_SCH_PRIO_0);
 #endif
   /* USER CODE BEGIN APP_BLE_Init_2 */
-
+  // Sürekli tarama için - 3 saniye sonra başlat
+  HAL_Delay(3000);
+  APP_DBG_MSG("=== CLIENT TARAMA BAŞLATILIYOR ===\n");
+  UTIL_SEQ_SetTask(1 << CFG_TASK_START_SCAN_ID, CFG_SCH_PRIO_0);
   /* USER CODE END APP_BLE_Init_2 */
   return;
 }
@@ -1105,7 +1109,32 @@ const uint8_t* BleGetBdAddress(void)
 }
 
 /* USER CODE BEGIN FD_LOCAL_FUNCTIONS */
+uint8_t Check_Device_Name(uint8_t *adv_data, uint8_t data_length)
+{
+    uint8_t i = 0;
+    while (i < data_length) {
+        uint8_t field_length = adv_data[i];
 
+        if (field_length == 0 || i + field_length >= data_length) break;
+
+        uint8_t field_type = adv_data[i + 1];
+
+        if (field_type == AD_TYPE_COMPLETE_LOCAL_NAME || field_type == AD_TYPE_SHORTENED_LOCAL_NAME) {
+            if (field_length >= 9) { // "DairyTag" + rakamlar
+                if (memcmp(&adv_data[i + 2], "DairyTag", 8) == 0) {
+                    memcpy(target_device_name, &adv_data[i + 2], field_length - 1);
+                    target_device_name[field_length - 1] = '\0';
+
+                    APP_DBG_MSG("=== TARGET BULUNDU: %s ===\n", target_device_name);
+                    return 1;
+                }
+            }
+        }
+
+        i += field_length + 1;
+    }
+    return 0;
+}
 /* USER CODE END FD_LOCAL_FUNCTIONS */
 
 /*************************************************************

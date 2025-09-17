@@ -35,9 +35,10 @@
 
 #include "p2p_server_app.h"
 
+
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#include "custom_data_service.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -524,6 +525,34 @@ void APP_BLE_Init(void)
   P2PS_APP_Init();
 
   /* USER CODE BEGIN APP_BLE_Init_3 */
+  /* CUSTOM DATA SERVICE BAŞLATMA
+     *
+     * Bu kod bloğu ne yapar?
+     * 1. Custom servisi başlatır
+     * 2. Hata kontrolü yapar
+     * 3. Event handler'ı kaydeder
+     * 4. Debug mesajı yazdırır
+     */
+    APP_DBG_MSG("Custom Data Service başlatılıyor...\n");
+
+    tBleStatus custom_ret = CustomDataService_Init();
+    if (custom_ret != BLE_STATUS_SUCCESS) {
+        APP_DBG_MSG("HATA: Custom Data Service başlatılamadı: 0x%x\n", custom_ret);
+        // Error_Handler(); // Opsiyonel: Sistem durdur
+    } else {
+        APP_DBG_MSG("✓ Custom Data Service başarıyla başlatıldı\n");
+    }
+
+    /*
+     * EVENT HANDLER KAYDETME
+     *
+     * SVCCTL_RegisterSvcHandler nedir?
+     * - Service Controller'a event handler kaydeder
+     * - BLE event'leri geldiğinde bizim fonksiyonumuzu çağırır
+     * - Örnek: Client yazdı → CustomDataService_Event_Handler çalışır
+     */
+    SVCCTL_RegisterSvcHandler(CustomDataService_Event_Handler);
+    APP_DBG_MSG("✓ Custom Data Service event handler kaydedildi\n");
 
   /* USER CODE END APP_BLE_Init_3 */
 
@@ -595,22 +624,22 @@ SVCCTL_UserEvtFlowStatus_t SVCCTL_App_Notification(void *p_Pckt)
 
   switch (p_event_pckt->evt)
   {
-    case HCI_DISCONNECTION_COMPLETE_EVT_CODE:
-    {
+  case HCI_DISCONNECTION_COMPLETE_EVT_CODE:
+  {
       p_disconnection_complete_event = (hci_disconnection_complete_event_rp0 *) p_event_pckt->data;
 
       if (p_disconnection_complete_event->Connection_Handle == BleApplicationContext.BleApplicationContext_legacy.connectionHandle)
       {
-        BleApplicationContext.BleApplicationContext_legacy.connectionHandle = 0;
-        BleApplicationContext.Device_Connection_Status = APP_BLE_IDLE;
-        APP_DBG_MSG(">>== HCI_DISCONNECTION_COMPLETE_EVT_CODE\n");
-        APP_DBG_MSG("     - Connection Handle:   0x%x\n     - Reason:    0x%x\n\r",
-                    p_disconnection_complete_event->Connection_Handle,
-                    p_disconnection_complete_event->Reason);
+          BleApplicationContext.BleApplicationContext_legacy.connectionHandle = 0;
+          BleApplicationContext.Device_Connection_Status = APP_BLE_IDLE;
+          APP_DBG_MSG(">>== HCI_DISCONNECTION_COMPLETE_EVT_CODE\n");
+          APP_DBG_MSG("     - Connection Handle:   0x%x\n     - Reason:    0x%x\n\r",
+                      p_disconnection_complete_event->Connection_Handle,
+                      p_disconnection_complete_event->Reason);
 
-        /* USER CODE BEGIN EVT_DISCONN_COMPLETE_2 */
+          /* USER CODE BEGIN EVT_DISCONN_COMPLETE_2 */
 
-        /* USER CODE END EVT_DISCONN_COMPLETE_2 */
+          /* USER CODE END EVT_DISCONN_COMPLETE_2 */
       }
 
       /* USER CODE BEGIN EVT_DISCONN_COMPLETE_1 */
@@ -626,20 +655,26 @@ SVCCTL_UserEvtFlowStatus_t SVCCTL_App_Notification(void *p_Pckt)
       HandleNotification.P2P_Evt_Opcode = PEER_DISCON_HANDLE_EVT;
       HandleNotification.ConnectionHandle = BleApplicationContext.BleApplicationContext_legacy.connectionHandle;
       P2PS_APP_Notification(&HandleNotification);
+
       /* USER CODE BEGIN EVT_DISCONN_COMPLETE */
-            // Client disconnected - trigger immediate reset
-            APP_DBG_MSG("=== CLIENT DISCONNECTED ===\n");
-            APP_DBG_MSG("Client disconnected, triggering immediate reset...\n");
+      // Client koptu - yeni isimle advertising devam et
+      APP_DBG_MSG("=== CLIENT KOPTU ===\n");
+      APP_DBG_MSG("Yeni isimle advertising başlıyor...\n");
 
-            // Stop all timers
+      // Timer'ı durdur
+      HW_TS_Stop(Reset_timer_Id);
 
-            HW_TS_Stop(Reset_timer_Id);
+      // Yeni isim üret
+      Update_Device_Name_With_Counter();
 
-            // Trigger immediate reset after disconnect
-            UTIL_SEQ_SetTask(1 << CFG_TASK_SYSTEM_RESET_ID, CFG_SCH_PRIO_0);
-            /* USER CODE END EVT_DISCONN_COMPLETE */
+      // 1 dakikalık timer yeniden başlat
+      HW_TS_Start(Reset_timer_Id, (60*1000*1000/CFG_TS_TICK_VAL));
+
+      APP_DBG_MSG("Server hazır: %s\n", current_device_name);
+      /* USER CODE END EVT_DISCONN_COMPLETE */
+
       break; /* HCI_DISCONNECTION_COMPLETE_EVT_CODE */
-    }
+  }
 
     case HCI_LE_META_EVT_CODE:
     {
@@ -1236,6 +1271,23 @@ static void Adv_Request(APP_BLE_ConnStatus_t NewStatus)
     Min_Inter = CFG_LP_CONN_ADV_INTERVAL_MIN;
     Max_Inter = CFG_LP_CONN_ADV_INTERVAL_MAX;
   }
+  /* USER CODE BEGIN Adv_Request_1 */
+
+      /*
+       * Custom service UUID'sini advertising paketine ekle
+       *
+       * Bu kod ne yapar?
+       * - Custom service UUID'sini (0x1234) advertising'e ekler
+       * - Client tarama yaparken bu UUID'yi görebilir
+       * - Hızlı service discovery için
+       */
+      BleApplicationContext.BleApplicationContext_legacy.advtServUUID[0] = CUSTOM_DATA_SERVICE_UUID[0];
+      BleApplicationContext.BleApplicationContext_legacy.advtServUUID[1] = CUSTOM_DATA_SERVICE_UUID[1];
+      BleApplicationContext.BleApplicationContext_legacy.advtServUUIDlen = 2;                                       // 2 byte UUID
+
+      APP_DBG_MSG("Custom service UUID advertising'e eklendi: 0x%04X\n", CUSTOM_DATA_SERVICE_UUID);
+
+      /* USER CODE END Adv_Request_1 */
 
   /**
    * Stop the timer, it will be restarted for a new shot
@@ -1369,19 +1421,19 @@ static void Update_Device_Name_With_Counter(void)
 {
     tBleStatus ret;
     static uint16_t current_name_counter;
-    // Generate random 4-digit number (0000-9999)
+
+    // Random sayı üret
     uint32_t random_val;
     HAL_RNG_GenerateRandomNumber(&hrng, &random_val);
     current_name_counter = random_val % 10000;
 
-    // Create the new name
+    // Yeni isim oluştur
     snprintf(current_device_name, sizeof(current_device_name), "%s%04d", base_name, current_name_counter);
 
-    // Print server reset message
-    APP_DBG_MSG("=== SERVER RESET ===\n");
-    APP_DBG_MSG("New server name: %s\n", current_device_name);
+    APP_DBG_MSG("=== SERVER YENİ İSİM ===\n");
+    APP_DBG_MSG("Yeni server ismi: %s\n", current_device_name);
 
-    // Prepare scan response data with complete local name
+    // Scan response hazırla
     uint8_t name_len = strlen(current_device_name);
     scan_response_length = name_len + 2;
 
@@ -1392,16 +1444,8 @@ static void Update_Device_Name_With_Counter(void)
 
         ret = hci_le_set_scan_response_data(scan_response_length, scan_response_data);
         if (ret == BLE_STATUS_SUCCESS) {
-            APP_DBG_MSG("Scan response updated with name: %s\n", current_device_name);
+            APP_DBG_MSG("✓ İsim scan response'a yazıldı\n");
         }
-    }
-
-    if (BleApplicationContext.Device_Connection_Status == APP_BLE_CONNECTED_SERVER) {
-        ret = aci_gatt_update_char_value(BleApplicationContext.BleApplicationContext_legacy.gapServiceHandle,
-                                        BleApplicationContext.BleApplicationContext_legacy.devNameCharHandle,
-                                        0,
-                                        name_len,
-                                        (uint8_t*)current_device_name);
     }
 }
 static void Reset_System_Timeout(void)
