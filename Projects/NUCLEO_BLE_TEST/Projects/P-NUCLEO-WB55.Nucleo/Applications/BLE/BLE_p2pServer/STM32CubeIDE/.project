@@ -108,6 +108,11 @@
 			<locationURI>$%7BPARENT-6-PROJECT_LOC%7D/Drivers/STM32WBxx_HAL_Driver/Src/stm32wbxx_hal_ipcc.c</locationURI>
 		</link>
 		<link>
+			<name>Drivers/STM32WBxx_HAL_Driver/stm32wbxx_hal_rng.c</name>
+			<type>1</type>
+			<locationURI>$%7BPARENT-6-PROJECT_LOC%7D/Drivers/STM32WBxx_HAL_Driver/Src/stm32wbxx_hal_rng.c</locationURI>
+		</link>
+		<link>
 			<name>Drivers/STM32WBxx_HAL_Driver/stm32wbxx_hal_pwr.c</name>
 			<type>1</type>
 			<locationURI>$%7BPARENT-6-PROJECT_LOC%7D/Drivers/STM32WBxx_HAL_Driver/Src/stm32wbxx_hal_pwr.c</locationURI>
@@ -126,11 +131,6 @@
 			<name>Drivers/STM32WBxx_HAL_Driver/stm32wbxx_hal_rcc_ex.c</name>
 			<type>1</type>
 			<locationURI>$%7BPARENT-6-PROJECT_LOC%7D/Drivers/STM32WBxx_HAL_Driver/Src/stm32wbxx_hal_rcc_ex.c</locationURI>
-		</link>
-		<link>
-			<name>Drivers/STM32WBxx_HAL_Driver/stm32wbxx_hal_rng.c</name>
-			<type>1</type>
-			<locationURI>$%7BPARENT-6-PROJECT_LOC%7D/Drivers/STM32WBxx_HAL_Driver/Src/stm32wbxx_hal_rng.c</locationURI>
 		</link>
 		<link>
 			<name>Drivers/STM32WBxx_HAL_Driver/stm32wbxx_hal_rtc.c</name>
@@ -161,11 +161,6 @@
 			<name>Drivers/STM32WBxx_HAL_Driver/stm32wbxx_hal_uart_ex.c</name>
 			<type>1</type>
 			<locationURI>$%7BPARENT-6-PROJECT_LOC%7D/Drivers/STM32WBxx_HAL_Driver/Src/stm32wbxx_hal_uart_ex.c</locationURI>
-		</link>
-		<link>
-			<name>Drivers/STM32WBxx_HAL_Driver/stm32wbxx_ll_rcc.c</name>
-			<type>1</type>
-			<locationURI>PARENT-12-PROJECT_LOC/STM32Cube/Repository/STM32Cube_FW_WB_V1.23.0/Drivers/STM32WBxx_HAL_Driver/Src/stm32wbxx_ll_rcc.c</locationURI>
 		</link>
 		<link>
 			<name>Middlewares/STM32_WPAN/ble_gap_aci.c</name>
