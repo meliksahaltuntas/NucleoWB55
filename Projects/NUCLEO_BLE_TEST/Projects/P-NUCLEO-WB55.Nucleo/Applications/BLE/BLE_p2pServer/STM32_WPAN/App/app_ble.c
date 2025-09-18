@@ -657,22 +657,23 @@ SVCCTL_UserEvtFlowStatus_t SVCCTL_App_Notification(void *p_Pckt)
       P2PS_APP_Notification(&HandleNotification);
 
       /* USER CODE BEGIN EVT_DISCONN_COMPLETE */
-      // Client koptu - yeni isimle advertising devam et
-      APP_DBG_MSG("=== CLIENT KOPTU ===\n");
-      APP_DBG_MSG("Yeni isimle advertising başlıyor...\n");
+         // Client koptu - derhal yeni advertising başlat
+         APP_DBG_MSG("=== CLIENT KOPTU - YENİ ADVERTİSİNG BAŞLANIYOR ===\n");
 
-      // Timer'ı durdur
-      HW_TS_Stop(Reset_timer_Id);
+         // Reset timer'ı durdur
+         HW_TS_Stop(Reset_timer_Id);
 
-      // Yeni isim üret
-      Update_Device_Name_With_Counter();
+         // Yeni isim üret
+         Update_Device_Name_With_Counter();
 
-      // 1 dakikalık timer yeniden başlat
-      HW_TS_Start(Reset_timer_Id, (60*1000*1000/CFG_TS_TICK_VAL));
+         // Derhal advertising başlat (bekleme yok)
+         Adv_Request(APP_BLE_FAST_ADV);
 
-      APP_DBG_MSG("Server hazır: %s\n", current_device_name);
-      /* USER CODE END EVT_DISCONN_COMPLETE */
+         // 1 dakikalık timer yeniden başlat
+         HW_TS_Start(Reset_timer_Id, (60*1000*1000/CFG_TS_TICK_VAL));
 
+         APP_DBG_MSG("Server hazır: %s\n", current_device_name);
+         /* USER CODE END EVT_DISCONN_COMPLETE */
       break; /* HCI_DISCONNECTION_COMPLETE_EVT_CODE */
   }
 
@@ -1272,22 +1273,14 @@ static void Adv_Request(APP_BLE_ConnStatus_t NewStatus)
     Max_Inter = CFG_LP_CONN_ADV_INTERVAL_MAX;
   }
   /* USER CODE BEGIN Adv_Request_1 */
+  // Custom service UUID'sini advertising'e ekle (yeni format)
+  BleApplicationContext.BleApplicationContext_legacy.advtServUUID[0] = CUSTOM_DATA_SERVICE_UUID[0];  // 0x34
+  BleApplicationContext.BleApplicationContext_legacy.advtServUUID[1] = CUSTOM_DATA_SERVICE_UUID[1];  // 0x12
+  BleApplicationContext.BleApplicationContext_legacy.advtServUUIDlen = 2;
 
-      /*
-       * Custom service UUID'sini advertising paketine ekle
-       *
-       * Bu kod ne yapar?
-       * - Custom service UUID'sini (0x1234) advertising'e ekler
-       * - Client tarama yaparken bu UUID'yi görebilir
-       * - Hızlı service discovery için
-       */
-      BleApplicationContext.BleApplicationContext_legacy.advtServUUID[0] = CUSTOM_DATA_SERVICE_UUID[0];
-      BleApplicationContext.BleApplicationContext_legacy.advtServUUID[1] = CUSTOM_DATA_SERVICE_UUID[1];
-      BleApplicationContext.BleApplicationContext_legacy.advtServUUIDlen = 2;                                       // 2 byte UUID
-
-      APP_DBG_MSG("Custom service UUID advertising'e eklendi: 0x%04X\n", CUSTOM_DATA_SERVICE_UUID);
-
-      /* USER CODE END Adv_Request_1 */
+  APP_DBG_MSG("Custom service UUID advertising'e eklendi: 0x%02X%02X\n",
+             CUSTOM_DATA_SERVICE_UUID[1], CUSTOM_DATA_SERVICE_UUID[0]);
+  /* USER CODE END Adv_Request_1 */
 
   /**
    * Stop the timer, it will be restarted for a new shot

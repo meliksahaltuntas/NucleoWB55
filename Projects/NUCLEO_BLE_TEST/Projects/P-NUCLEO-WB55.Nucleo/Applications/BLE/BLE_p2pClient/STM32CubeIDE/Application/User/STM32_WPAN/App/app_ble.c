@@ -376,9 +376,10 @@ void APP_BLE_Init(void)
   UTIL_SEQ_SetTask(1 << CFG_TASK_START_SCAN_ID, CFG_SCH_PRIO_0);
 #endif
   /* USER CODE BEGIN APP_BLE_Init_2 */
-  // Sürekli tarama için - 3 saniye sonra başlat
-  HAL_Delay(3000);
-  APP_DBG_MSG("=== CLIENT TARAMA BAŞLATILIYOR ===\n");
+  APP_DBG_MSG("=== CLIENT OTOMATİK TARAMA BAŞLATILIYOR ===\n");
+  BSP_LED_On(LED_RED);  // Kırmızı LED - arama modunda
+  // 1 saniye bekleyip tarama başlat
+  HAL_Delay(1000);
   UTIL_SEQ_SetTask(1 << CFG_TASK_START_SCAN_ID, CFG_SCH_PRIO_0);
   /* USER CODE END APP_BLE_Init_2 */
   return;
@@ -983,8 +984,12 @@ static void Scan_Request(void)
   if (BleApplicationContext.Device_Connection_Status != APP_BLE_CONNECTED_CLIENT)
   {
     /* USER CODE BEGIN APP_BLE_CONNECTED_CLIENT */
-    BSP_LED_On(LED_BLUE);
-    APP_DBG_MSG("LED BLUE ON\n");
+	  // Tarama başlarken LEDleri ayarla
+	          BSP_LED_On(LED_RED);     // Arama modunda kırmızı
+	          BSP_LED_Off(LED_BLUE);   // Bağlı değil
+	          BSP_LED_Off(LED_GREEN);  // Veri alışverişi yok
+
+	          APP_DBG_MSG("LED KIRMIZI ON - TARAMA BAŞLADI\n");
     /* USER CODE END APP_BLE_CONNECTED_CLIENT */
     result = aci_gap_start_general_discovery_proc(SCAN_P, SCAN_L, CFG_BLE_ADDRESS_TYPE, 1);
     if (result == BLE_STATUS_SUCCESS)
