@@ -44,8 +44,6 @@
 #define CMD_CLEAR_DATA_BYTE2        0xAD
 
 // Client için global değişkenler
-static uint8_t ReceivedCustomData[DATA_STORAGE_SIZE];  // Alınan veri
-static uint32_t CustomReadCount = 0;                  // Kaç kez okundu
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -168,21 +166,34 @@ static P2P_ClientContext_t aP2PClientContext[BLE_CFG_CLT_MAX_NBR_CB];
  * END of Section BLE_APP_CONTEXT
  */
 /* USER CODE BEGIN PV */
-static P2P_Client_App_Context_t P2P_Client_App_Context;
+// P2P ile 30-byte veri alma için değişkenler
+static uint8_t ReceivedData[30];
+static uint8_t PacketStatus[2] = {0, 0}; // packet1, packet2 alındı mı?
+static uint32_t ClientDataCount = 0;
 static char target_device_name[32];
-static uint8_t DisconnectTimerId;     // Timer ID'si
-static uint8_t AutoDisconnectEnabled; // Otomatik disconnect aktif mi?
-// Custom service handle'ları - MINIMAL VERSION
+static uint8_t DisconnectTimerId;
+static uint8_t AutoDisconnectEnabled;
+
+// Custom service handle'ları
 typedef struct {
-    uint16_t ServiceHandle;         // Service handle
-    uint16_t StorageCharHandle;     // Storage characteristic handle
-    // CommandCharHandle YOK (minimal version)
-    // StatusCharHandle YOK (minimal version)
-    uint8_t  DiscoveryComplete;     // Keşif tamamlandı mı?
+    uint16_t ServiceHandle;
+    uint16_t StorageCharHandle;
+    uint8_t  DiscoveryComplete;
 } CustomService_Handles_t;
 
 static CustomService_Handles_t CustomHandles;
 
+// Custom service constants
+#define DATA_STORAGE_SIZE           30
+#define COMMAND_SIZE                2
+#define CMD_CLEAR_DATA_BYTE1        0xDE
+#define CMD_CLEAR_DATA_BYTE2        0xAD
+
+static uint8_t ReceivedCustomData[DATA_STORAGE_SIZE];
+static uint32_t CustomReadCount = 0;
+
+// P2P Client App Context - SADECE VARIABLE DECLARATION
+static P2P_Client_App_Context_t P2P_Client_App_Context;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -193,11 +204,9 @@ static tBleStatus Write_Char(uint16_t UUID, uint8_t Service_Instance, uint8_t *p
 static void Button_Trigger_Received( void );
 static void Update_Service( void );
 static void AutoDisconnect_Timer_Callback(void);
-// Fonksiyon tanımları
 static void PrintReceivedData(uint8_t *data, uint16_t length, const char* source);
 static void ReadCustomData(void);
-static void SendClearCommand(void);
-static void TestCustomService(void);
+static void SendDataReceivedConfirmation(void);
 /* USER CODE END PFP */
 
 /* Functions Definition ------------------------------------------------------*/
@@ -294,7 +303,7 @@ void P2PC_APP_Notification(P2PC_APP_ConnHandle_Not_evt_t *pNotification)
       BSP_LED_On(LED_RED);    // Kırmızı LED yak (arama modunda)
 
       // HAL_Delay yerine timer kullan
-      APP_DBG_MSG("=== 3 SANİYE SONRA YENİDEN TARAMA ===\n");
+      APP_DBG_MSG("=== 3 SANIYE SONRA YENIDEN TARAMA ===\n");
 
       // 3 saniye sonra yeniden tara
       HW_TS_Start(DisconnectTimerId, (uint32_t)(3 * 1000 * 1000 / CFG_TS_TICK_VAL));
@@ -351,19 +360,39 @@ static SVCCTL_EvtAckStatus_t Event_Handler(void *Event)
                        * - ReadCustomData() çağırdığımızda
                        * - Server veriyi gönderince
                        */
-                      case ACI_ATT_READ_RESP_VSEVT_CODE: {
-                          aci_att_read_resp_event_rp0 *pr = (void*)blecore_evt->data;
+      case ACI_ATT_READ_RESP_VSEVT_CODE: {
+          aci_att_read_resp_event_rp0 *pr = (void*)blecore_evt->data;
 
-                          APP_DBG_MSG("=== GATT READ RESPONSE ===\n");
-                          APP_DBG_MSG("Bağlantı Handle: 0x%04X\n", pr->Connection_Handle);
-                          APP_DBG_MSG("Gelen veri uzunluğu: %d byte\n", pr->Event_Data_Length);
+          APP_DBG_MSG("=== CLIENT: DATA RECEIVED FROM SERVER ===\n");
+          APP_DBG_MSG("Connected to server: %s\n", target_device_name);
+          APP_DBG_MSG("Received data length: %d bytes\n", pr->Event_Data_Length);
 
-                          // Veriyi yazdır
-                          if (pr->Event_Data_Length > 0) {
-                              PrintReceivedData(pr->Attribute_Value, pr->Event_Data_Length, "READ RESPONSE");
-                          }
-                          break;
-                      }
+          if (pr->Event_Data_Length == 30) {
+              APP_DBG_MSG("Received Data (30 bytes): ");
+              for (int i = 0; i < 30; i++) {
+                  APP_DBG_MSG("%02X ", pr->Attribute_Value[i]);
+                  if ((i + 1) % 10 == 0) APP_DBG_MSG("\n                         ");
+              }
+              APP_DBG_MSG("\nData successfully received from server\n");
+
+              // Veriyi kopyala
+              memcpy(ReceivedCustomData, pr->Attribute_Value, 30);
+              CustomReadCount++;
+
+              // LED: Mavi - Veri alındı
+              BSP_LED_Off(LED_GREEN);
+              BSP_LED_On(LED_BLUE);
+
+              // 2 saniye sonra confirmation gönder
+              APP_DBG_MSG("Sending data received confirmation to server...\n");
+              HAL_Delay(2000);
+              SendDataReceivedConfirmation();  // Bu satır artık çalışacak
+
+          } else {
+              APP_DBG_MSG("ERROR: Unexpected data length received\n");
+          }
+          break;
+      }
 
                       /*
                        * GATT Notification - Server bildirim gönderdi
@@ -483,22 +512,23 @@ static SVCCTL_EvtAckStatus_t Event_Handler(void *Event)
             }
           }
           /* USER CODE BEGIN CUSTOM_SERVICE_DISCOVERY */
-          // Custom service keşfi ekle
+          // Custom service keşfi (P2P sonrası)
           if (pr->Attribute_Data_Length == 6) {  // 16-bit UUID
               idx = 4;
               for (i = 0; i < numServ; i++) {
                   uint16_t uuid = UNPACK_2_BYTE_PARAMETER(&pr->Attribute_Data_List[idx]);
 
                   // Custom Data Service UUID kontrol et (0x1234)
-                  if (uuid == 0x1234) {  // Little-endian'dan big-endian'a çevrilmiş hali
+                  if (uuid == 0x1234) {
                       CustomHandles.ServiceHandle = UNPACK_2_BYTE_PARAMETER(&pr->Attribute_Data_List[idx-4]);
-                      APP_DBG_MSG("✓ Custom Service bulundu, Handle: 0x%04X\n", CustomHandles.ServiceHandle);
+                      APP_DBG_MSG("=== CLIENT: CUSTOM SERVICE DISCOVERED ===\n");
+                      APP_DBG_MSG("Custom Service Handle: 0x%04X\n", CustomHandles.ServiceHandle);
 
-                      // Characteristic'leri keşfet
+                      // Characteristic discovery başlat
                       aci_gatt_disc_all_char_of_service(
                           aP2PClientContext[index].connHandle,
                           CustomHandles.ServiceHandle,
-                          CustomHandles.ServiceHandle + 5  // Service end handle
+                          CustomHandles.ServiceHandle + 10  // End handle
                       );
                   }
                   idx += 6;
@@ -712,32 +742,101 @@ void Gatt_Notification(P2P_Client_App_Notification_evt_t *pNotification)
 
 /* USER CODE END P2P_Client_Evt_Opcode */
 
-    case P2P_NOTIFICATION_INFO_RECEIVED_EVT:
-/* USER CODE BEGIN P2P_NOTIFICATION_INFO_RECEIVED_EVT */
-    {
-      P2P_Client_App_Context.LedControl.Device_Led_Selection=pNotification->DataTransfered.pPayload[0];
-      switch(P2P_Client_App_Context.LedControl.Device_Led_Selection) {
+  case P2P_NOTIFICATION_INFO_RECEIVED_EVT:
+  /* USER CODE BEGIN P2P_NOTIFICATION_INFO_RECEIVED_EVT */
+  {
+      uint8_t *data = pNotification->DataTransfered.pPayload;
+      uint8_t length = pNotification->DataTransfered.Length;
 
-        case 0x01 : {
+      APP_DBG_MSG("=== CLIENT: P2P NOTIFICATION RECEIVED ===\n");
+      APP_DBG_MSG("Length: %d bytes\n", length);
 
-          P2P_Client_App_Context.LedControl.Led1=pNotification->DataTransfered.pPayload[1];
+      // Raw data göster (debugging için)
+      APP_DBG_MSG("Raw data: ");
+      for(int i = 0; i < length; i++) {
+          APP_DBG_MSG("%02X ", data[i]);
+      }
+      APP_DBG_MSG("\n");
 
-          if(P2P_Client_App_Context.LedControl.Led1==0x00){
-            BSP_LED_Off(LED_BLUE);
-            APP_DBG_MSG(" -- P2P APPLICATION CLIENT : NOTIFICATION RECEIVED - LED OFF \n\r");
-            APP_DBG_MSG(" \n\r");
-          } else {
-            APP_DBG_MSG(" -- P2P APPLICATION CLIENT : NOTIFICATION RECEIVED - LED ON\n\r");
-            APP_DBG_MSG(" \n\r");
-            BSP_LED_On(LED_BLUE);
+      // 2-BYTE PAKET SİSTEMİ (YENİ)
+      if(length == 2) {
+          uint8_t group = data[0];
+          uint8_t byte_data = data[1];
+          static uint8_t first_group_count = 0;
+          static uint8_t second_group_count = 0;
+
+          APP_DBG_MSG("2-byte packet: Group=%d, Data=%02X\n", group, byte_data);
+
+          if(group == 0x01) {
+              // İlk 15 byte grubu
+              ReceivedData[first_group_count] = byte_data;
+              first_group_count++;
+              APP_DBG_MSG("Group 1: byte %d/15 received\n", first_group_count);
+
+              if(first_group_count == 15) {
+                  PacketStatus[0] = 1;
+                  first_group_count = 0;
+                  APP_DBG_MSG("Group 1 complete (bytes 0-14)\n");
+              }
+
+          } else if(group == 0x02) {
+              // İkinci 15 byte grubu
+              ReceivedData[15 + second_group_count] = byte_data;
+              second_group_count++;
+              APP_DBG_MSG("Group 2: byte %d/15 received\n", second_group_count);
+
+              if(second_group_count == 15) {
+                  PacketStatus[1] = 1;
+                  second_group_count = 0;
+                  APP_DBG_MSG("Group 2 complete (bytes 15-29)\n");
+              }
           }
 
-          break;
-        }
-        default : break;
-      }
+          // HER İKİ GRUP DA TAMAMLANDI MI?
+          if (PacketStatus[0] && PacketStatus[1]) {
+              ClientDataCount++;
 
-    }
+              APP_DBG_MSG("\n=== CLIENT: COMPLETE 30-BYTE DATA RECEIVED ===\n");
+              APP_DBG_MSG("Connected to server: %s\n", target_device_name);
+              APP_DBG_MSG("Complete 30-byte data:\n");
+
+              // 30-byte veriyi düzenli şekilde göster
+              for (int i = 0; i < 30; i++) {
+                  APP_DBG_MSG("%02X ", ReceivedData[i]);
+                  if ((i + 1) % 10 == 0) {
+                      APP_DBG_MSG("\n");
+                  }
+              }
+
+              // Checksum hesapla
+              uint16_t checksum = 0;
+              for (int i = 0; i < 30; i++) {
+                  checksum += ReceivedData[i];
+              }
+              APP_DBG_MSG("Checksum: 0x%04X (%d decimal)\n", checksum, checksum);
+              APP_DBG_MSG("Data reception count: %lu\n", ClientDataCount);
+
+              // LED: Mavi - Veri alındı
+              BSP_LED_Off(LED_GREEN);
+              BSP_LED_On(LED_BLUE);
+
+              // Server'a confirmation gönder
+              APP_DBG_MSG("Sending data received confirmation to server...\n");
+              HAL_Delay(1000);
+              SendDataReceivedConfirmation();
+
+              // Paket status'unu reset et
+              PacketStatus[0] = 0;
+              PacketStatus[1] = 0;
+          }
+      } else {
+          // Eski P2P LED notification (compatibility)
+          APP_DBG_MSG("Legacy P2P notification (non-data packet)\n");
+          // ... existing LED logic ...
+      }
+  }
+  /* USER CODE END P2P_NOTIFICATION_INFO_RECEIVED_EVT */
+  break;
 /* USER CODE END P2P_NOTIFICATION_INFO_RECEIVED_EVT */
       break;
 
@@ -757,239 +856,124 @@ uint8_t P2P_Client_APP_Get_State( void ) {
   return aP2PClientContext[0].state;
 }
 /* USER CODE BEGIN LF */
-/**
- * @brief  Feature Characteristic update
- * @param  pFeatureValue: The address of the new value to be written
- * @retval None
- */
 
-/* Alınan veriyi yazdıran fonksiyon
-*
-* Bu fonksiyon ne yapar?
-* - Client'ın aldığı veriyi detaylı şekilde yazdırır
-* - Hex formatında gösterir
-* - Checksum hesaplar
-* - Server ile karşılaştırma için
-*/
+// 1. ÖNCE PrintReceivedData
 static void PrintReceivedData(uint8_t *data, uint16_t length, const char* source) {
-   APP_DBG_MSG("\n=== CLIENT VERİ ALDI ===\n");
-   APP_DBG_MSG("Kaynak: %s\n", source);
-   APP_DBG_MSG("Uzunluk: %d byte\n", length);
+    APP_DBG_MSG("\n=== CLIENT VERİ ALDI ===\n");
+    APP_DBG_MSG("Kaynak: %s\n", source);
+    APP_DBG_MSG("Uzunluk: %d byte\n", length);
 
-   if (length == DATA_STORAGE_SIZE) {  // 30 byte custom data ise
-       APP_DBG_MSG("--- CLIENT ALDIĞI VERİ (30 byte) ---\n");
+    if (length == DATA_STORAGE_SIZE) {
+        APP_DBG_MSG("--- CLIENT ALDIĞI VERİ (30 byte) ---\n");
+        memcpy(ReceivedCustomData, data, DATA_STORAGE_SIZE);
 
-       // Veriyi kopyala (sonra kullanmak için)
-       memcpy(ReceivedCustomData, data, DATA_STORAGE_SIZE);
+        for (int i = 0; i < length; i++) {
+            if (i % 8 == 0) {
+                APP_DBG_MSG("\n[%02d-%02d]: ", i,
+                           (i+7 < length) ? i+7 : length-1);
+            }
+            APP_DBG_MSG("%02X ", data[i]);
+        }
+        APP_DBG_MSG("\n\n");
 
-       // Hex formatında yazdır
-       for (int i = 0; i < length; i++) {
-           if (i % 8 == 0) {
-               APP_DBG_MSG("\n[%02d-%02d]: ", i,
-                          (i+7 < length) ? i+7 : length-1);
-           }
-           APP_DBG_MSG("%02X ", data[i]);
-       }
+        uint16_t checksum = 0;
+        for (int i = 0; i < length; i++) {
+            checksum += data[i];
+        }
 
-       APP_DBG_MSG("\n\n");
-
-       // Checksum hesapla (Server ile karşılaştırmak için)
-       uint16_t checksum = 0;
-       for (int i = 0; i < length; i++) {
-           checksum += data[i];
-       }
-
-       APP_DBG_MSG("Client Checksum: 0x%04X (%d decimal)\n", checksum, checksum);
-       APP_DBG_MSG("Alma Zamanı: %lu ms\n", HAL_GetTick());
-
-       // ASCII karakter kontrolü (eğer okunabilir karakterler varsa)
-       APP_DBG_MSG("ASCII Görünümü: ");
-       for (int i = 0; i < length; i++) {
-           if (data[i] >= 32 && data[i] <= 126) {  // Printable ASCII aralığı
-               APP_DBG_MSG("%c", data[i]);
-           } else {
-               APP_DBG_MSG(".");  // Okunmayan karakterler için nokta
-           }
-       }
-       APP_DBG_MSG("\n");
-
-       CustomReadCount++;  // İstatistik
-       APP_DBG_MSG("Toplam okuma sayısı: %lu\n", CustomReadCount);
-
-   } else {
-       // Kısa veri için basit yazdırma
-       APP_DBG_MSG("Veri: ");
-       for (int i = 0; i < length; i++) {
-           APP_DBG_MSG("%02X ", data[i]);
-       }
-       APP_DBG_MSG("\n");
-   }
-
-   APP_DBG_MSG("==========================\n\n");
+        APP_DBG_MSG("Client Checksum: 0x%04X (%d decimal)\n", checksum, checksum);
+        CustomReadCount++;
+        APP_DBG_MSG("Toplam okuma sayısı: %lu\n", CustomReadCount);
+    }
+    APP_DBG_MSG("==========================\n\n");
 }
 
-/*
-* Custom veri okuma fonksiyonu
-*
-* Bu fonksiyon ne yapar?
-* - Server'daki 30 byte veriyi okur
-* - Handle bilgisini kullanır (debug'dan öğrendiğimiz)
-* - GATT read komutu gönderir
-*
-* ÖNEMLI: Handle değerlerini debug mesajlarından öğrenmelisiniz!
-*/
+// 2. ReadCustomData
 static void ReadCustomData(void) {
     if (P2P_Client_App_Context.ConnectionHandle != 0x00) {
+        APP_DBG_MSG("=== CLIENT: READING SERVER DATA ===\n");
 
-        // Handle'lar keşfedildi mi kontrol et
-        if (!CustomHandles.DiscoveryComplete) {
-            APP_DBG_MSG("✗ Custom service henüz keşfedilmedi!\n");
-            APP_DBG_MSG("  Service discovery başlatılıyor...\n");
+        if (CustomHandles.DiscoveryComplete && CustomHandles.StorageCharHandle != 0) {
+            APP_DBG_MSG("Using Custom Service Handle: 0x%04X\n", CustomHandles.StorageCharHandle);
 
-            // Service discovery başlat
-            aci_gatt_disc_all_primary_services(P2P_Client_App_Context.ConnectionHandle);
-            return;
-        }
+            tBleStatus ret = aci_gatt_read_char_value(
+                P2P_Client_App_Context.ConnectionHandle,
+                CustomHandles.StorageCharHandle
+            );
 
-        APP_DBG_MSG("\n>>> CLIENT CUSTOM VERİYİ OKUYOR <<<\n");
-
-        // Artık doğru handle'ı kullan
-        tBleStatus ret = aci_gatt_read_char_value(
-            P2P_Client_App_Context.ConnectionHandle,
-            CustomHandles.StorageCharHandle  // Dinamik handle kullan
-        );
-
-        if (ret == BLE_STATUS_SUCCESS) {
-            APP_DBG_MSG("✓ Read komutu gönderildi, Handle: 0x%04X\n",
-                       CustomHandles.StorageCharHandle);
+            if (ret == BLE_STATUS_SUCCESS) {
+                APP_DBG_MSG("Read request sent successfully\n");
+            } else {
+                APP_DBG_MSG("ERROR: Read request failed: 0x%x\n", ret);
+            }
         } else {
-            APP_DBG_MSG("✗ Read hatası: 0x%x\n", ret);
+            APP_DBG_MSG("WARNING: Custom service not ready, discovery status: %d\n",
+                       CustomHandles.DiscoveryComplete);
+            APP_DBG_MSG("Service Handle: 0x%04X, Storage Handle: 0x%04X\n",
+                       CustomHandles.ServiceHandle, CustomHandles.StorageCharHandle);
         }
+    } else {
+        APP_DBG_MSG("ERROR: Not connected to server\n");
     }
 }
 
-/*
-* Clear komutu gönderme fonksiyonu
-*
-* Bu fonksiyon ne yapar?
-* - Server'a [0xDE, 0xAD] komutunu gönderir
-* - "Veriyi okudum, yenisini üretebilirsin" anlamında
-* - Server yeni veri üretir
-*/
-/*static void SendClearCommand(void) {
+// 3. SendDataReceivedConfirmation
+static void SendDataReceivedConfirmation(void) {
+    APP_DBG_MSG("=== CLIENT: SENDING DATA RECEIVED CONFIRMATION ===\n");
+
+    uint8_t confirm_cmd[2] = {CMD_CLEAR_DATA_BYTE1, CMD_CLEAR_DATA_BYTE2};
+
     if (P2P_Client_App_Context.ConnectionHandle != 0x00) {
-
-        // Handle'lar hazır mı kontrol et
-        if (!CustomHandles.DiscoveryComplete) {
-            APP_DBG_MSG("✗ Custom service henüz keşfedilmedi!\n");
-            return;
-        }
-
-        APP_DBG_MSG("\n>>> CLIENT CLEAR KOMUTU GÖNDERİYOR <<<\n");
-
-        uint8_t clear_command[COMMAND_SIZE] = {
-            CMD_CLEAR_DATA_BYTE1,  // 0xDE
-            CMD_CLEAR_DATA_BYTE2   // 0xAD
-        };
-
-        // Doğru handle ile komut gönder
-        tBleStatus ret = aci_gatt_write_char_value(
-            P2P_Client_App_Context.ConnectionHandle,
-            CustomHandles.CommandCharHandle,  // Dinamik handle
-            COMMAND_SIZE,
-            clear_command
-        );
+        tBleStatus ret = Write_Char(P2P_WRITE_CHAR_UUID, 0, confirm_cmd);
 
         if (ret == BLE_STATUS_SUCCESS) {
-               CustomWriteCount++;  // Sayacı artır
-               APP_DBG_MSG("✓ Clear komutu gönderildi, Handle: 0x%04X\n",
-                          CustomHandles.CommandCharHandle);
-               APP_DBG_MSG("Toplam yazma sayısı: %lu\n", CustomWriteCount);  // Sayacı göster
-           }
+            APP_DBG_MSG("Data received confirmation sent to server\n");
+            APP_DBG_MSG("Server will now clear data and disconnect\n");
+        } else {
+            APP_DBG_MSG("ERROR: Failed to send confirmation: 0x%x\n", ret);
+        }
+    } else {
+        APP_DBG_MSG("ERROR: Not connected to server\n");
     }
 }
-*/
 
-/*
-* Komple test fonksiyonu
-*
-* Bu fonksiyon ne yapar?
-* 1. Önce veriyi okur
-* 2. 2 saniye bekler
-* 3. Clear komutu gönderir
-* 4. 2 saniye bekler
-* 5. Yeni veriyi okur
-*/
-static void TestCustomService(void) {
-   APP_DBG_MSG("\n========== CUSTOM SERVICE TEST BAŞLIYOR ==========\n");
-
-   // 1. Mevcut veriyi oku
-   APP_DBG_MSG("ADIM 1: Mevcut veri okunuyor...\n");
-   ReadCustomData();
-
-   // 2. Kısa bekleme (Server'ın cevap vermesi için)
-   HAL_Delay(2000);  // 2 saniye bekle
-
-   // 3. Clear komutu gönder
-   APP_DBG_MSG("ADIM 2: Clear komutu gönderiliyor...\n");
-   SendClearCommand();
-
-   // 4. Server'ın yeni veri üretmesi için bekle
-   HAL_Delay(2000);  // 2 saniye bekle
-
-   // 5. Yeni veriyi oku
-   APP_DBG_MSG("ADIM 3: Yeni veri okunuyor...\n");
-   ReadCustomData();
-
-   APP_DBG_MSG("========== CUSTOM SERVICE TEST BİTTİ ==========\n\n");
-}
+// 4. AutoDisconnect_Timer_Callback
 static void AutoDisconnect_Timer_Callback(void) {
-    // 2 saniye sonra çağrılacak fonksiyon
-    APP_DBG_MSG("-- 2 SANIYE GECTI - BAGLANTI KESILIYOR --\n");
-
-    if (P2P_Client_App_Context.ConnectionHandle != 0x00) {
-        // Bağlantıyı kes
-        aci_gap_terminate(P2P_Client_App_Context.ConnectionHandle,
-                         HCI_REMOTE_USER_TERMINATED_CONNECTION_ERR_CODE);
-
-        AutoDisconnectEnabled = 0; // Otomatik disconnect'i durdur
-        APP_DBG_MSG("-- DISCONNECT KOMUTU GÖNDERİLDİ --\n");
-        UTIL_SEQ_SetTask(1 << CFG_TASK_START_SCAN_ID, CFG_SCH_PRIO_0);
-    }
+    APP_DBG_MSG("=== CLIENT: RECONNECTION TIMER ===\n");
+    UTIL_SEQ_SetTask(1 << CFG_TASK_START_SCAN_ID, CFG_SCH_PRIO_0);
 }
 
-// Clienttan servera veri göndermek için kullanılır
-tBleStatus Write_Char(uint16_t UUID, uint8_t Service_Instance, uint8_t *pPayload)
+// 5. Write_Char (EXISTING FUNCTION - KEEP AS IS)
+static tBleStatus Write_Char(uint16_t UUID, uint8_t Service_Instance, uint8_t *pPayload)
 {
-  tBleStatus ret = BLE_STATUS_INVALID_PARAMS;
-  uint8_t index;
+    tBleStatus ret = BLE_STATUS_INVALID_PARAMS;
+    uint8_t index;
 
-  index = 0;
-  while((index < BLE_CFG_CLT_MAX_NBR_CB) &&
-          (aP2PClientContext[index].state != APP_BLE_IDLE))
-  {
-    switch(UUID)
+    index = 0;
+    while((index < BLE_CFG_CLT_MAX_NBR_CB) &&
+            (aP2PClientContext[index].state != APP_BLE_IDLE))
     {
-      case P2P_WRITE_CHAR_UUID: /* SERVER RX -- so CLIENT TX */
-        ret = aci_gatt_write_without_resp(aP2PClientContext[index].connHandle,
-                                         aP2PClientContext[index].P2PWriteToServerCharHdle,
-                                         2, /* charValueLen */
-                                         (uint8_t *)  pPayload);
-        break;
-      default:
-        break;
+        switch(UUID)
+        {
+            case P2P_WRITE_CHAR_UUID:
+                ret = aci_gatt_write_without_resp(aP2PClientContext[index].connHandle,
+                                                 aP2PClientContext[index].P2PWriteToServerCharHdle,
+                                                 2,
+                                                 (uint8_t *)  pPayload);
+                break;
+            default:
+                break;
+        }
+        index++;
     }
-    index++;
-  }
+    return ret;
+}
 
-  return ret;
-}/* end Write_Char() */
-
+// 6. Button_Trigger_Received (UPDATE THIS)
 void Button_Trigger_Received(void)
 {
-    APP_DBG_MSG("-- BUTON BASILDI --\n");
+    APP_DBG_MSG("=== CLIENT: MANUAL DATA REQUEST ===\n");
 
-    // P2P button işlevi
     if(P2P_Client_App_Context.ButtonStatus.Button1 == 0x00) {
         P2P_Client_App_Context.ButtonStatus.Button1 = 0x01;
     } else {
@@ -998,65 +982,76 @@ void Button_Trigger_Received(void)
 
     Write_Char(P2P_WRITE_CHAR_UUID, 0, (uint8_t *)&P2P_Client_App_Context.ButtonStatus);
 
-    // Custom service test - sadece veri okuma
-    APP_DBG_MSG("Custom service test: Veri okuma\n");
-    ReadCustomData();  // Sadece okuma testi
+    if (P2P_Client_App_Context.ConnectionHandle != 0x00) {
+        APP_DBG_MSG("Reading 30-byte data from server manually...\n");
+        ReadCustomData();
+    } else {
+        APP_DBG_MSG("ERROR: Not connected to any server\n");
+    }
 }
+
+// 7. Update_Service (EXISTING FUNCTION - KEEP AS IS)
 void Update_Service()
 {
-  uint16_t enable = 0x0001;
-  uint16_t disable = 0x0000;
-  uint8_t index;
+    uint16_t enable = 0x0001;
+    uint16_t disable = 0x0000;
+    uint8_t index;
 
-  index = 0;
-  while((index < BLE_CFG_CLT_MAX_NBR_CB) &&
-          (aP2PClientContext[index].state != APP_BLE_IDLE))
-  {
-    switch(aP2PClientContext[index].state)
+    index = 0;
+    while((index < BLE_CFG_CLT_MAX_NBR_CB) &&
+            (aP2PClientContext[index].state != APP_BLE_IDLE))
     {
-      case APP_BLE_DISCOVER_SERVICES:
-        APP_DBG_MSG("P2P_DISCOVER_SERVICES\n");
-        break;
-      case APP_BLE_DISCOVER_CHARACS:
-        APP_DBG_MSG("* GATT : Discover P2P Characteristics\n");
-        aci_gatt_disc_all_char_of_service(aP2PClientContext[index].connHandle,
-                                          aP2PClientContext[index].P2PServiceHandle,
-                                          aP2PClientContext[index].P2PServiceEndHandle);
-        break;
-      case APP_BLE_DISCOVER_WRITE_DESC: /* Not Used - No descriptor */
-        APP_DBG_MSG("* GATT : Discover Descriptor of TX - Write  Characteristic\n");
-        aci_gatt_disc_all_char_desc(aP2PClientContext[index].connHandle,
-                                    aP2PClientContext[index].P2PWriteToServerCharHdle,
-                                    aP2PClientContext[index].P2PWriteToServerCharHdle+2);
-        break;
-      case APP_BLE_DISCOVER_NOTIFICATION_CHAR_DESC:
-        APP_DBG_MSG("* GATT : Discover Descriptor of Rx - Notification  Characteristic\n");
-        aci_gatt_disc_all_char_desc(aP2PClientContext[index].connHandle,
-                                    aP2PClientContext[index].P2PNotificationCharHdle,
-                                    aP2PClientContext[index].P2PNotificationCharHdle+2);
-        break;
-      case APP_BLE_ENABLE_NOTIFICATION_DESC:
-        APP_DBG_MSG("* GATT : Enable Server Notification\n");
-        aci_gatt_write_char_desc(aP2PClientContext[index].connHandle,
-                                 aP2PClientContext[index].P2PNotificationDescHandle,
-                                 2,
-                                 (uint8_t *)&enable);
-        aP2PClientContext[index].state = APP_BLE_CONNECTED_CLIENT;
-        BSP_LED_Off(LED_RED);
-        break;
-      case APP_BLE_DISABLE_NOTIFICATION_DESC :
-        APP_DBG_MSG("* GATT : Disable Server Notification\n");
-        aci_gatt_write_char_desc(aP2PClientContext[index].connHandle,
-                                 aP2PClientContext[index].P2PNotificationDescHandle,
-                                 2,
-                                 (uint8_t *)&disable);
-        aP2PClientContext[index].state = APP_BLE_CONNECTED_CLIENT;
-        break;
-      default:
-        break;
+        switch(aP2PClientContext[index].state)
+        {
+            case APP_BLE_DISCOVER_SERVICES:
+                APP_DBG_MSG("P2P_DISCOVER_SERVICES\n");
+                break;
+            case APP_BLE_DISCOVER_CHARACS:
+                APP_DBG_MSG("* GATT : Discover P2P Characteristics\n");
+                aci_gatt_disc_all_char_of_service(aP2PClientContext[index].connHandle,
+                                                  aP2PClientContext[index].P2PServiceHandle,
+                                                  aP2PClientContext[index].P2PServiceEndHandle);
+                break;
+            case APP_BLE_DISCOVER_WRITE_DESC:
+                APP_DBG_MSG("* GATT : Discover Descriptor of TX - Write  Characteristic\n");
+                aci_gatt_disc_all_char_desc(aP2PClientContext[index].connHandle,
+                                            aP2PClientContext[index].P2PWriteToServerCharHdle,
+                                            aP2PClientContext[index].P2PWriteToServerCharHdle+2);
+                break;
+            case APP_BLE_DISCOVER_NOTIFICATION_CHAR_DESC:
+                APP_DBG_MSG("* GATT : Discover Descriptor of Rx - Notification  Characteristic\n");
+                aci_gatt_disc_all_char_desc(aP2PClientContext[index].connHandle,
+                                            aP2PClientContext[index].P2PNotificationCharHdle,
+                                            aP2PClientContext[index].P2PNotificationCharHdle+2);
+                break;
+            case APP_BLE_ENABLE_NOTIFICATION_DESC:
+                APP_DBG_MSG("* GATT : Enable Server Notification\n");
+                aci_gatt_write_char_desc(aP2PClientContext[index].connHandle,
+                                         aP2PClientContext[index].P2PNotificationDescHandle,
+                                         2,
+                                         (uint8_t *)&enable);
+                aP2PClientContext[index].state = APP_BLE_CONNECTED_CLIENT;
+                BSP_LED_Off(LED_RED);
+
+                /* USER CODE BEGIN CONNECTED_CLIENT_AUTO_REQUEST */
+                APP_DBG_MSG("=== CLIENT: READY TO RECEIVE DATA ===\n");
+                APP_DBG_MSG("Waiting for P2P notifications from server...\n");
+                /* USER CODE END CONNECTED_CLIENT_AUTO_REQUEST */
+                break;
+            case APP_BLE_DISABLE_NOTIFICATION_DESC:
+                APP_DBG_MSG("* GATT : Disable Server Notification\n");
+                aci_gatt_write_char_desc(aP2PClientContext[index].connHandle,
+                                         aP2PClientContext[index].P2PNotificationDescHandle,
+                                         2,
+                                         (uint8_t *)&disable);
+                aP2PClientContext[index].state = APP_BLE_CONNECTED_CLIENT;
+                break;
+            default:
+                break;
+        }
+        index++;
     }
-    index++;
-  }
-  return;
+    return;
 }
+
 /* USER CODE END LF */

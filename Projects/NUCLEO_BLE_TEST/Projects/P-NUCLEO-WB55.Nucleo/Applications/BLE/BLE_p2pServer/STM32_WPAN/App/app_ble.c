@@ -38,7 +38,6 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-#include "custom_data_service.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -354,18 +353,16 @@ uint8_t a_ManufData[14] = {sizeof(a_ManufData)-1,
 
 /* USER CODE BEGIN PV */
 // Name change functionality
-
-
 static const char base_name[] = "DairyTag";
-static char current_device_name[32]; // Buffer for full name
-
+static char current_device_name[32];
 
 // Scan response data for long name
 static uint8_t scan_response_data[31];
 static uint8_t scan_response_length = 0;
-// Add these variables for reset functionality
-static uint8_t reset_pending = 0;
+
+// Reset functionality
 static uint8_t Reset_timer_Id;
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -393,7 +390,8 @@ static void Reset_System_Timeout(void);
 extern RNG_HandleTypeDef hrng;
 
 /* USER CODE BEGIN EV */
-
+// P2PS_Send_30ByteData fonksiyon declaration'ını ekle
+void P2PS_Send_30ByteData(void);
 /* USER CODE END EV */
 
 /* Functions Definition ------------------------------------------------------*/
@@ -525,40 +523,8 @@ void APP_BLE_Init(void)
   P2PS_APP_Init();
 
   /* USER CODE BEGIN APP_BLE_Init_3 */
-  /* CUSTOM DATA SERVICE BAŞLATMA
-     *
-     * Bu kod bloğu ne yapar?
-     * 1. Custom servisi başlatır
-     * 2. Hata kontrolü yapar
-     * 3. Event handler'ı kaydeder
-     * 4. Debug mesajı yazdırır
-     */
-    APP_DBG_MSG("Custom Data Service başlatılıyor...\n");
-
-    tBleStatus custom_ret = CustomDataService_Init();
-    if (custom_ret != BLE_STATUS_SUCCESS) {
-        APP_DBG_MSG("HATA: Custom Data Service başlatılamadı: 0x%x\n", custom_ret);
-        // Error_Handler(); // Opsiyonel: Sistem durdur
-    } else {
-        APP_DBG_MSG("✓ Custom Data Service başarıyla başlatıldı\n");
-    }
-
-    /*
-     * EVENT HANDLER KAYDETME
-     *
-     * SVCCTL_RegisterSvcHandler nedir?
-     * - Service Controller'a event handler kaydeder
-     * - BLE event'leri geldiğinde bizim fonksiyonumuzu çağırır
-     * - Örnek: Client yazdı → CustomDataService_Event_Handler çalışır
-     */
-    SVCCTL_RegisterSvcHandler(CustomDataService_Event_Handler);
-    APP_DBG_MSG("✓ Custom Data Service event handler kaydedildi\n");
-
+  APP_DBG_MSG("Using P2P service for data transfer\n");
   /* USER CODE END APP_BLE_Init_3 */
-
-  /**
-   * Create timer to handle the Advertising Stop
-   */
   HW_TS_Create(CFG_TIM_PROC_ID_ISR, &(BleApplicationContext.Advertising_mgr_timer_Id), hw_ts_SingleShot, Adv_Cancel_Req);
   /**
    * Create timer to handle the Led Switch OFF
@@ -581,22 +547,24 @@ void APP_BLE_Init(void)
   Adv_Request(APP_BLE_FAST_ADV);
 
   /* USER CODE BEGIN APP_BLE_Init_2 */
-  // Initialize name change system
-
+  // Random isim oluştur
   Update_Device_Name_With_Counter();
 
-
-
-
-  // Create timer for system reset
+  // Reset timer oluştur (60 saniye - client bulamazsa reset)
   HW_TS_Create(CFG_TIM_PROC_ID_ISR, &Reset_timer_Id, hw_ts_SingleShot, Reset_System_Timeout);
-
-  // Register tasks
-
   UTIL_SEQ_RegTask(1<<CFG_TASK_SYSTEM_RESET_ID, UTIL_SEQ_RFU, Process_System_Reset);
 
-  // Start the reset timer (1 minute)
+  // 60 saniye timer başlat
   HW_TS_Start(Reset_timer_Id, (60*1000*1000/CFG_TS_TICK_VAL));
+
+  // LED: Kırmızı - Advertising modunda
+  BSP_LED_On(LED_RED);
+  BSP_LED_Off(LED_GREEN);
+  BSP_LED_Off(LED_BLUE);
+
+  APP_DBG_MSG("=== SERVER STARTED ===\n");
+  APP_DBG_MSG("Server Name: %s\n", current_device_name);
+  APP_DBG_MSG("Waiting for client connection (60s timeout)...\n");
   /* USER CODE END APP_BLE_Init_2 */
 
   return;
@@ -632,49 +600,27 @@ SVCCTL_UserEvtFlowStatus_t SVCCTL_App_Notification(void *p_Pckt)
       {
           BleApplicationContext.BleApplicationContext_legacy.connectionHandle = 0;
           BleApplicationContext.Device_Connection_Status = APP_BLE_IDLE;
-          APP_DBG_MSG(">>== HCI_DISCONNECTION_COMPLETE_EVT_CODE\n");
-          APP_DBG_MSG("     - Connection Handle:   0x%x\n     - Reason:    0x%x\n\r",
-                      p_disconnection_complete_event->Connection_Handle,
-                      p_disconnection_complete_event->Reason);
 
-          /* USER CODE BEGIN EVT_DISCONN_COMPLETE_2 */
+          APP_DBG_MSG("=== SERVER: CLIENT DISCONNECTED ===\n");
+          APP_DBG_MSG("Data transfer completed successfully\n");
+          APP_DBG_MSG("Preparing system reset in 3 seconds...\n");
 
-          /* USER CODE END EVT_DISCONN_COMPLETE_2 */
+          // LED: Mavi - Transfer tamamlandı
+          BSP_LED_Off(LED_RED);
+          BSP_LED_Off(LED_GREEN);
+          BSP_LED_On(LED_BLUE);
+
+          // P2P service notification
+          HandleNotification.P2P_Evt_Opcode = PEER_DISCON_HANDLE_EVT;
+          HandleNotification.ConnectionHandle = BleApplicationContext.BleApplicationContext_legacy.connectionHandle;
+          P2PS_APP_Notification(&HandleNotification);
+
+          /* USER CODE BEGIN EVT_DISCONN_COMPLETE */
+          // 3 saniye sonra reset (veri transferi tamamlandığı için)
+          HW_TS_Start(Reset_timer_Id, (3*1000*1000/CFG_TS_TICK_VAL));
+          /* USER CODE END EVT_DISCONN_COMPLETE */
       }
-
-      /* USER CODE BEGIN EVT_DISCONN_COMPLETE_1 */
-
-      /* USER CODE END EVT_DISCONN_COMPLETE_1 */
-
-      /* restart advertising */
-      Adv_Request(APP_BLE_FAST_ADV);
-
-      /**
-       * SPECIFIC to P2P Server APP
-       */
-      HandleNotification.P2P_Evt_Opcode = PEER_DISCON_HANDLE_EVT;
-      HandleNotification.ConnectionHandle = BleApplicationContext.BleApplicationContext_legacy.connectionHandle;
-      P2PS_APP_Notification(&HandleNotification);
-
-      /* USER CODE BEGIN EVT_DISCONN_COMPLETE */
-         // Client koptu - derhal yeni advertising başlat
-         APP_DBG_MSG("=== CLIENT KOPTU - YENİ ADVERTİSİNG BAŞLANIYOR ===\n");
-
-         // Reset timer'ı durdur
-         HW_TS_Stop(Reset_timer_Id);
-
-         // Yeni isim üret
-         Update_Device_Name_With_Counter();
-
-         // Derhal advertising başlat (bekleme yok)
-         Adv_Request(APP_BLE_FAST_ADV);
-
-         // 1 dakikalık timer yeniden başlat
-         HW_TS_Start(Reset_timer_Id, (60*1000*1000/CFG_TS_TICK_VAL));
-
-         APP_DBG_MSG("Server hazır: %s\n", current_device_name);
-         /* USER CODE END EVT_DISCONN_COMPLETE */
-      break; /* HCI_DISCONNECTION_COMPLETE_EVT_CODE */
+      break;
   }
 
     case HCI_LE_META_EVT_CODE:
@@ -737,52 +683,46 @@ SVCCTL_UserEvtFlowStatus_t SVCCTL_App_Notification(void *p_Pckt)
 
         case HCI_LE_CONNECTION_COMPLETE_SUBEVT_CODE:
         {
-          p_connection_complete_event = (hci_le_connection_complete_event_rp0 *) p_meta_evt->data;
-          /**
-           * The connection is done, there is no need anymore to schedule the LP ADV
-           */
+            p_connection_complete_event = (hci_le_connection_complete_event_rp0 *) p_meta_evt->data;
 
-          HW_TS_Stop(BleApplicationContext.Advertising_mgr_timer_Id);
+            // Timer'ı durdur (client bulundu)
+            HW_TS_Stop(BleApplicationContext.Advertising_mgr_timer_Id);
+            HW_TS_Stop(Reset_timer_Id);
 
-          APP_DBG_MSG(">>== HCI_LE_CONNECTION_COMPLETE_SUBEVT_CODE - Connection handle: 0x%x\n", p_connection_complete_event->Connection_Handle);
-          APP_DBG_MSG("     - Connection established with Central: @:%02x:%02x:%02x:%02x:%02x:%02x\n",
-                      p_connection_complete_event->Peer_Address[5],
-                      p_connection_complete_event->Peer_Address[4],
-                      p_connection_complete_event->Peer_Address[3],
-                      p_connection_complete_event->Peer_Address[2],
-                      p_connection_complete_event->Peer_Address[1],
-                      p_connection_complete_event->Peer_Address[0]);
-          APP_DBG_MSG("     - Connection Interval:   %.2f ms\n     - Connection latency:    %d\n     - Supervision Timeout: %d ms\n\r",
-                      p_connection_complete_event->Conn_Interval*1.25,
-                      p_connection_complete_event->Conn_Latency,
-                      p_connection_complete_event->Supervision_Timeout*10)
-                     ;
+            APP_DBG_MSG("=== SERVER: CLIENT CONNECTED ===\n");
+            APP_DBG_MSG("Server Name: %s\n", current_device_name);
+            APP_DBG_MSG("Client Address: %02x:%02x:%02x:%02x:%02x:%02x\n",
+                        p_connection_complete_event->Peer_Address[5],
+                        p_connection_complete_event->Peer_Address[4],
+                        p_connection_complete_event->Peer_Address[3],
+                        p_connection_complete_event->Peer_Address[2],
+                        p_connection_complete_event->Peer_Address[1],
+                        p_connection_complete_event->Peer_Address[0]);
 
-          if (BleApplicationContext.Device_Connection_Status == APP_BLE_LP_CONNECTING)
-          {
-            /* Connection as client */
-            BleApplicationContext.Device_Connection_Status = APP_BLE_CONNECTED_CLIENT;
-          }
-          else
-          {
-            /* Connection as server */
-            BleApplicationContext.Device_Connection_Status = APP_BLE_CONNECTED_SERVER;
-          }
-          BleApplicationContext.BleApplicationContext_legacy.connectionHandle = p_connection_complete_event->Connection_Handle;
-          /**
-           * SPECIFIC to P2P Server APP
-           */
-          HandleNotification.P2P_Evt_Opcode = PEER_CONN_HANDLE_EVT;
-          HandleNotification.ConnectionHandle = BleApplicationContext.BleApplicationContext_legacy.connectionHandle;
-          P2PS_APP_Notification(&HandleNotification);
-          /* USER CODE BEGIN HCI_EVT_LE_CONN_COMPLETE */
-                    // Client connected - stop reset timer, wait for disconnect
-                    APP_DBG_MSG("=== CLIENT CONNECTED ===\n");
-                    APP_DBG_MSG("Client connected to server, stopping reset timer...\n");
+            // LED: Yeşil - Client bağlandı
+            BSP_LED_Off(LED_RED);
+            BSP_LED_On(LED_GREEN);
+            BSP_LED_Off(LED_BLUE);
 
-                    /* USER CODE END HCI_EVT_LE_CONN_COMPLETE */
-          break;
+            // Bağlantı bilgilerini kaydet
+            BleApplicationContext.BleApplicationContext_legacy.connectionHandle = p_connection_complete_event->Connection_Handle;
 
+            if (BleApplicationContext.Device_Connection_Status == APP_BLE_LP_CONNECTING) {
+                BleApplicationContext.Device_Connection_Status = APP_BLE_CONNECTED_CLIENT;
+            } else {
+                BleApplicationContext.Device_Connection_Status = APP_BLE_CONNECTED_SERVER;
+            }
+
+            // P2P service notification
+            HandleNotification.P2P_Evt_Opcode = PEER_CONN_HANDLE_EVT;
+            HandleNotification.ConnectionHandle = BleApplicationContext.BleApplicationContext_legacy.connectionHandle;
+            P2PS_APP_Notification(&HandleNotification);
+
+            /* USER CODE BEGIN HCI_EVT_LE_CONN_COMPLETE */
+            // Veri gönderimi için notification aktif olmasını bekle
+            APP_DBG_MSG("Client connected, waiting for P2P notification enable...\n");
+            /* USER CODE END HCI_EVT_LE_CONN_COMPLETE */
+            break;
         }
 
         default:
@@ -1273,13 +1213,14 @@ static void Adv_Request(APP_BLE_ConnStatus_t NewStatus)
     Max_Inter = CFG_LP_CONN_ADV_INTERVAL_MAX;
   }
   /* USER CODE BEGIN Adv_Request_1 */
-  // Custom service UUID'sini advertising'e ekle (yeni format)
-  BleApplicationContext.BleApplicationContext_legacy.advtServUUID[0] = CUSTOM_DATA_SERVICE_UUID[0];  // 0x34
-  BleApplicationContext.BleApplicationContext_legacy.advtServUUID[1] = CUSTOM_DATA_SERVICE_UUID[1];  // 0x12
-  BleApplicationContext.BleApplicationContext_legacy.advtServUUIDlen = 2;
+  // Custom service UUID referansını KALDIR
+  // BleApplicationContext.BleApplicationContext_legacy.advtServUUID[0] = CUSTOM_DATA_SERVICE_UUID[0];
+  // BleApplicationContext.BleApplicationContext_legacy.advtServUUID[1] = CUSTOM_DATA_SERVICE_UUID[1];
+  // BleApplicationContext.BleApplicationContext_legacy.advtServUUIDlen = 2;
 
-  APP_DBG_MSG("Custom service UUID advertising'e eklendi: 0x%02X%02X\n",
-             CUSTOM_DATA_SERVICE_UUID[1], CUSTOM_DATA_SERVICE_UUID[0]);
+  // Sadece P2P service UUID'ini kullan
+  BleApplicationContext.BleApplicationContext_legacy.advtServUUIDlen = 0; // No custom UUID
+  APP_DBG_MSG("Using P2P service only for advertising\n");
   /* USER CODE END Adv_Request_1 */
 
   /**
@@ -1423,7 +1364,7 @@ static void Update_Device_Name_With_Counter(void)
     // Yeni isim oluştur
     snprintf(current_device_name, sizeof(current_device_name), "%s%04d", base_name, current_name_counter);
 
-    APP_DBG_MSG("=== SERVER YENİ İSİM ===\n");
+    APP_DBG_MSG("=== SERVER YENI ISIM ===\n");
     APP_DBG_MSG("Yeni server ismi: %s\n", current_device_name);
 
     // Scan response hazırla
@@ -1437,46 +1378,39 @@ static void Update_Device_Name_With_Counter(void)
 
         ret = hci_le_set_scan_response_data(scan_response_length, scan_response_data);
         if (ret == BLE_STATUS_SUCCESS) {
-            APP_DBG_MSG("✓ İsim scan response'a yazıldı\n");
+            APP_DBG_MSG("✓ Isim scan response'a yazıldı\n");
         }
     }
 }
 static void Reset_System_Timeout(void)
 {
-    reset_pending = 1;
+    APP_DBG_MSG("=== SERVER: TIMEOUT OR TRANSFER COMPLETE ===\n");
     UTIL_SEQ_SetTask(1 << CFG_TASK_SYSTEM_RESET_ID, CFG_SCH_PRIO_0);
 }
 
 static void Process_System_Reset(void)
 {
+    APP_DBG_MSG("=== SERVER: PERFORMING SYSTEM RESET ===\n");
+    APP_DBG_MSG("Generating new identity and restarting...\n");
 
-
-    APP_DBG_MSG("=== COMPLETE SYSTEM RESET ===\n");
-    APP_DBG_MSG("Performing full system reset with new identity...\n");
-
-
-
-    // Stop all timers
-
+    // Tüm timer'ları durdur
     HW_TS_Stop(Reset_timer_Id);
+    HW_TS_Stop(BleApplicationContext.Advertising_mgr_timer_Id);
 
-    // Stop advertising and disconnect if needed
+    // Advertising'i durdur
     aci_gap_set_non_discoverable();
 
-    // Force disconnect if connected
+    // Bağlantı varsa kes
     if (BleApplicationContext.BleApplicationContext_legacy.connectionHandle != 0xFFFF) {
         aci_gap_terminate(BleApplicationContext.BleApplicationContext_legacy.connectionHandle, 0x13);
-        BleApplicationContext.BleApplicationContext_legacy.connectionHandle = 0xFFFF;
     }
 
-    // Wait a moment for clean disconnect
+    // Kısa bekleme
     HAL_Delay(100);
 
-    // Perform actual system reset
-    APP_DBG_MSG("System resetting in 3...2...1...\n");
+    // Sistem reset
+    APP_DBG_MSG("System reset in 3...2...1...\n");
     HAL_Delay(1000);
-
-    // Trigger hardware reset
     NVIC_SystemReset();
 }
 /* USER CODE END FD_LOCAL_FUNCTION */

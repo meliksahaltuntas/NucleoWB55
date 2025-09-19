@@ -528,21 +528,27 @@ SVCCTL_UserEvtFlowStatus_t SVCCTL_App_Notification(void *pckt)
       break;
 
     case HCI_DISCONNECTION_COMPLETE_EVT_CODE:
-      {
-        /* USER CODE BEGIN EVT_DISCONN_COMPLETE */
+        if (cc->Connection_Handle == BleApplicationContext.BleApplicationContext_legacy.connectionHandle) {
+            BleApplicationContext.BleApplicationContext_legacy.connectionHandle = 0;
+            BleApplicationContext.Device_Connection_Status = APP_BLE_IDLE;
 
-        /* USER CODE END EVT_DISCONN_COMPLETE */
-        if (cc->Connection_Handle == BleApplicationContext.BleApplicationContext_legacy.connectionHandle)
-        {
-          BleApplicationContext.BleApplicationContext_legacy.connectionHandle = 0;
-          BleApplicationContext.Device_Connection_Status = APP_BLE_IDLE;
-          APP_DBG_MSG("\r\n\r** DISCONNECTION EVENT WITH SERVER \n\r");
-          handleNotification.P2P_Evt_Opcode = PEER_DISCON_HANDLE_EVT;
-          handleNotification.ConnectionHandle = BleApplicationContext.BleApplicationContext_legacy.connectionHandle;
-          P2PC_APP_Notification(&handleNotification);
+            /* USER CODE BEGIN EVT_DISCONN_COMPLETE */
+            APP_DBG_MSG("=== CLIENT: DISCONNECTED FROM SERVER ===\n");
+            APP_DBG_MSG("Data transfer completed successfully\n");
+            APP_DBG_MSG("Restarting scan in 3 seconds...\n");
+
+            // LED: Kırmızı - Disconnected, scanning'e hazır
+            BSP_LED_On(LED_RED);
+            BSP_LED_Off(LED_GREEN);
+            BSP_LED_Off(LED_BLUE);
+            /* USER CODE END EVT_DISCONN_COMPLETE */
+
+            // P2P disconnection notification
+            handleNotification.P2P_Evt_Opcode = PEER_DISCON_HANDLE_EVT;
+            handleNotification.ConnectionHandle = BleApplicationContext.BleApplicationContext_legacy.connectionHandle;
+            P2PC_APP_Notification(&handleNotification);
         }
-      }
-      break; /* HCI_DISCONNECTION_COMPLETE_EVT_CODE */
+        break;
 
     case HCI_LE_META_EVT_CODE:
       {
@@ -557,34 +563,33 @@ SVCCTL_UserEvtFlowStatus_t SVCCTL_App_Notification(void *pckt)
 
           /* USER CODE END subevent */
 
-          case HCI_LE_CONNECTION_COMPLETE_SUBEVT_CODE:
-            /* USER CODE BEGIN EVT_LE_CONN_COMPLETE */
-
-            /* USER CODE END EVT_LE_CONN_COMPLETE */
-            /**
-             * The connection is done,
-             */
+        case HCI_LE_CONNECTION_COMPLETE_SUBEVT_CODE:
             connection_complete_event = (hci_le_connection_complete_event_rp0 *) meta_evt->data;
             BleApplicationContext.BleApplicationContext_legacy.connectionHandle = connection_complete_event->Connection_Handle;
             BleApplicationContext.Device_Connection_Status = APP_BLE_CONNECTED_CLIENT;
 
-            /* CONNECTION WITH CLIENT */
-            APP_DBG_MSG("\r\n\r**  CONNECTION COMPLETE EVENT WITH SERVER \n\r");
+            /* USER CODE BEGIN EVT_LE_CONN_COMPLETE */
+            APP_DBG_MSG("=== CLIENT: CONNECTED TO SERVER ===\n");
+            APP_DBG_MSG("Connected to server: %s\n", target_device_name);
+            APP_DBG_MSG("Connection handle: 0x%04X\n", connection_complete_event->Connection_Handle);
+
+            // LED: Yeşil - Server'a bağlandı
+            BSP_LED_Off(LED_RED);
+            BSP_LED_On(LED_GREEN);
+            BSP_LED_Off(LED_BLUE);
+            /* USER CODE END EVT_LE_CONN_COMPLETE */
+
+            // P2P connection notification
             handleNotification.P2P_Evt_Opcode = PEER_CONN_HANDLE_EVT;
             handleNotification.ConnectionHandle = BleApplicationContext.BleApplicationContext_legacy.connectionHandle;
             P2PC_APP_Notification(&handleNotification);
 
+            // GATT service discovery başlat
             result = aci_gatt_disc_all_primary_services(BleApplicationContext.BleApplicationContext_legacy.connectionHandle);
-            if (result == BLE_STATUS_SUCCESS)
-            {
-              APP_DBG_MSG("\r\n\r** GATT SERVICES & CHARACTERISTICS DISCOVERY  \n\r");
-              APP_DBG_MSG("* GATT :  Start Searching Primary Services \r\n\r");
+            if (result == BLE_STATUS_SUCCESS) {
+                APP_DBG_MSG("Starting GATT service discovery...\n");
             }
-            else
-            {
-              APP_DBG_MSG("BLE_CTRL_App_Notification(), All services discovery Failed \r\n\r");
-            }
-            break; /* HCI_LE_CONNECTION_COMPLETE_SUBEVT_CODE */
+            break;
           case HCI_LE_ADVERTISING_REPORT_SUBEVT_CODE:
           {
               le_advertising_event = (hci_le_advertising_report_event_rp0 *) meta_evt->data;
