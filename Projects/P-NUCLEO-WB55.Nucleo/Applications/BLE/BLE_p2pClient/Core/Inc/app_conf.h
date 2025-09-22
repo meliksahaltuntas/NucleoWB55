@@ -332,9 +332,9 @@
 * BLE stack Maximum number of created Enhanced ATT bearers to be configured
 * in addition to the number of links
 *     - Range: 0 .. 4
-*/ 
+*/
 #define CFG_BLE_MAX_ADD_EATT_BEARERS    (4)
-        
+
 
 /**
  * BLE Rx model configuration flags to be configured with:

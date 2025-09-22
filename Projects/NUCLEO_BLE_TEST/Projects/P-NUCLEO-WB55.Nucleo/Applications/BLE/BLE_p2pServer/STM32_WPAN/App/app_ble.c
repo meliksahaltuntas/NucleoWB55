@@ -235,7 +235,6 @@ uint8_t index_con_int, mutex;
  * Advertising Data
  */
 #if (P2P_SERVER1 != 0)
-static const char a_LocalName[] = {AD_TYPE_COMPLETE_LOCAL_NAME , 'P', '2', 'P', 'S', 'R', 'V', '1'};
 uint8_t a_ManufData[14] = {sizeof(a_ManufData)-1,
                            AD_TYPE_MANUFACTURER_SPECIFIC_DATA,
                            0x01,                               /*SKD version */
@@ -363,6 +362,23 @@ static uint8_t scan_response_length = 0;
 // Reset functionality
 static uint8_t Reset_timer_Id;
 
+// Name change functionality
+
+
+// RADIO ACTIVITY MONITORING
+typedef struct {
+    uint32_t total_measurement_time;
+    uint32_t radio_active_time;
+    uint32_t tx_time;
+    uint32_t rx_time;
+    uint32_t scan_time;
+    uint32_t adv_time;
+    uint32_t last_activity_start;
+    uint32_t measurement_start_time;
+    uint8_t is_radio_active;
+} RadioProfile_t;
+
+static RadioProfile_t radio_profile = {0};
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -384,6 +400,14 @@ static void Connection_Interval_Update_Req(void);
 static void Update_Device_Name_With_Counter(void);
 static void Process_System_Reset(void);
 static void Reset_System_Timeout(void);
+
+static void Update_Device_Name_With_Counter(void);
+static void Process_System_Reset(void);
+static void Reset_System_Timeout(void);
+
+// RADIO MONITORING FONKSIYONLARI
+static void Print_Radio_Statistics(void);
+static void Reset_Radio_Statistics(void);
 /* USER CODE END PFP */
 
 /* External variables --------------------------------------------------------*/
@@ -524,6 +548,14 @@ void APP_BLE_Init(void)
 
   /* USER CODE BEGIN APP_BLE_Init_3 */
   APP_DBG_MSG("Using P2P service for data transfer\n");
+
+  // RADIO ACTIVITY MONITORING AKTIFLEŞTIR
+  tBleStatus radio_ret = aci_hal_set_radio_activity_mask(0x0006);
+  if (radio_ret != BLE_STATUS_SUCCESS) {
+      APP_DBG_MSG("Radio activity mask failed: 0x%x\n", radio_ret);
+  } else {
+      APP_DBG_MSG("Radio activity monitoring enabled\n");
+  }
   /* USER CODE END APP_BLE_Init_3 */
   HW_TS_Create(CFG_TIM_PROC_ID_ISR, &(BleApplicationContext.Advertising_mgr_timer_Id), hw_ts_SingleShot, Adv_Cancel_Req);
   /**
@@ -565,6 +597,17 @@ void APP_BLE_Init(void)
   APP_DBG_MSG("=== SERVER STARTED ===\n");
   APP_DBG_MSG("Server Name: %s\n", current_device_name);
   APP_DBG_MSG("Waiting for client connection (60s timeout)...\n");
+
+
+  Update_Device_Name_With_Counter();
+  HW_TS_Create(CFG_TIM_PROC_ID_ISR, &Reset_timer_Id, hw_ts_SingleShot, Reset_System_Timeout);
+  UTIL_SEQ_RegTask(1<<CFG_TASK_SYSTEM_RESET_ID, UTIL_SEQ_RFU, Process_System_Reset);
+  HW_TS_Start(Reset_timer_Id, (60*1000*1000/CFG_TS_TICK_VAL));
+
+  // RADIO PROFILING BAŞLAT
+  memset(&radio_profile, 0, sizeof(RadioProfile_t));
+  radio_profile.measurement_start_time = HAL_GetTick();
+  APP_DBG_MSG("Radio activity profiling started\n");
   /* USER CODE END APP_BLE_Init_2 */
 
   return;
@@ -616,6 +659,7 @@ SVCCTL_UserEvtFlowStatus_t SVCCTL_App_Notification(void *p_Pckt)
           P2PS_APP_Notification(&HandleNotification);
 
           /* USER CODE BEGIN EVT_DISCONN_COMPLETE */
+          Print_Radio_Statistics();
           // 3 saniye sonra reset (veri transferi tamamlandığı için)
           HW_TS_Start(Reset_timer_Id, (3*1000*1000/CFG_TS_TICK_VAL));
           /* USER CODE END EVT_DISCONN_COMPLETE */
@@ -721,6 +765,10 @@ SVCCTL_UserEvtFlowStatus_t SVCCTL_App_Notification(void *p_Pckt)
             /* USER CODE BEGIN HCI_EVT_LE_CONN_COMPLETE */
             // Veri gönderimi için notification aktif olmasını bekle
             APP_DBG_MSG("Client connected, waiting for P2P notification enable...\n");
+            // Advertising sona erdi
+            uint32_t current_time = HAL_GetTick();
+            radio_profile.adv_time += (current_time - radio_profile.measurement_start_time);
+            APP_DBG_MSG("Advertising phase ended\n");
             /* USER CODE END HCI_EVT_LE_CONN_COMPLETE */
             break;
         }
@@ -847,11 +895,20 @@ SVCCTL_UserEvtFlowStatus_t SVCCTL_App_Notification(void *p_Pckt)
 
 #if (RADIO_ACTIVITY_EVENT != 0)
         case ACI_HAL_END_OF_RADIO_ACTIVITY_VSEVT_CODE:
-          /* USER CODE BEGIN RADIO_ACTIVITY_EVENT*/
-          BSP_LED_On(LED_GREEN);
-          HW_TS_Start(BleApplicationContext.SwitchOffGPIO_timer_Id, (uint32_t)LED_ON_TIMEOUT);
-          /* USER CODE END RADIO_ACTIVITY_EVENT*/
-          break; /* ACI_HAL_END_OF_RADIO_ACTIVITY_VSEVT_CODE */
+                  /* USER CODE BEGIN RADIO_ACTIVITY_EVENT*/
+                  if (radio_profile.is_radio_active) {
+                      uint32_t end_time = HAL_GetTick();
+                      uint32_t duration = end_time - radio_profile.last_activity_start;
+                      radio_profile.radio_active_time += duration;
+                      radio_profile.is_radio_active = 0;
+
+                      APP_DBG_MSG("Radio OFF - Duration: %lu ms\n", duration);
+                  }
+
+                  BSP_LED_On(LED_GREEN);
+                  HW_TS_Start(BleApplicationContext.SwitchOffGPIO_timer_Id, (uint32_t)LED_ON_TIMEOUT);
+                  /* USER CODE END RADIO_ACTIVITY_EVENT*/
+                  break; /* ACI_HAL_END_OF_RADIO_ACTIVITY_VSEVT_CODE */
 #endif /* RADIO_ACTIVITY_EVENT != 0 */
 
         case ACI_GATT_INDICATION_VSEVT_CODE:
@@ -1412,6 +1469,27 @@ static void Process_System_Reset(void)
     APP_DBG_MSG("System reset in 3...2...1...\n");
     HAL_Delay(1000);
     NVIC_SystemReset();
+}
+void Print_Radio_Statistics(void) {
+    uint32_t total_time = HAL_GetTick() - radio_profile.measurement_start_time;
+    float duty_cycle = (total_time > 0) ?
+        ((float)radio_profile.radio_active_time / total_time * 100.0f) : 0.0f;
+
+    APP_DBG_MSG("\n=== RADIO ACTIVITY STATISTICS ===\n");
+    APP_DBG_MSG("Total Measurement Time: %lu ms\n", total_time);
+    APP_DBG_MSG("Radio Active Time: %lu ms (%.1f%%)\n",
+                radio_profile.radio_active_time, duty_cycle);
+    APP_DBG_MSG("Advertising Time: %lu ms\n", radio_profile.adv_time);
+    APP_DBG_MSG("Scanning Time: %lu ms\n", radio_profile.scan_time);
+    APP_DBG_MSG("Idle Time: %lu ms\n",
+                total_time - radio_profile.radio_active_time);
+    APP_DBG_MSG("==================================\n\n");
+}
+
+void Reset_Radio_Statistics(void) {
+    memset(&radio_profile, 0, sizeof(RadioProfile_t));
+    radio_profile.measurement_start_time = HAL_GetTick();
+    APP_DBG_MSG("Radio statistics reset\n");
 }
 /* USER CODE END FD_LOCAL_FUNCTION */
 
