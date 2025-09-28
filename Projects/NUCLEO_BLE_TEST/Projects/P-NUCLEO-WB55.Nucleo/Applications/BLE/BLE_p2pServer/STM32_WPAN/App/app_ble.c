@@ -1477,8 +1477,6 @@ void Print_Radio_Statistics(void) {
 
     APP_DBG_MSG("\n=== RADIO ACTIVITY STATISTICS ===\n");
     APP_DBG_MSG("Total Measurement Time: %lu ms\n", total_time);
-    APP_DBG_MSG("Radio Active Time: %lu ms (%.1f%%)\n",
-                radio_profile.radio_active_time, duty_cycle);
     APP_DBG_MSG("Advertising Time: %lu ms\n", radio_profile.adv_time);
     APP_DBG_MSG("Scanning Time: %lu ms\n", radio_profile.scan_time);
     APP_DBG_MSG("Idle Time: %lu ms\n",
